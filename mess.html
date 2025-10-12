@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>混乱中的秩序</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Courier New', monospace;
+            background: linear-gradient(45deg, #000, #111, #222);
+            color: #ddd;
+            min-height: 100vh;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            position: relative;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            border-bottom: 1px solid #444;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            color: #ff5555;
+            text-shadow: 0 0 10px #ff0000;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            color: #aaa;
+        }
+        
+        .text-container {
+            position: relative;
+            background-color: rgba(30, 30, 30, 0.8);
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 0 20px rgba(255, 0, 0, 0.3);
+            min-height: 400px;
+            overflow: hidden;
+        }
+        
+        .overlay-text {
+            position: relative;
+            z-index: 2;
+            font-size: 18px;
+            line-height: 1.6;
+            letter-spacing: 1px;
+            color: #ddd;
+            mix-blend-mode: overlay;
+            user-select: none;
+        }
+        
+        .hidden-text {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            right: 30px;
+            bottom: 30px;
+            z-index: 1;
+            font-size: 18px;
+            line-height: 1.6;
+            color: transparent;
+            opacity: 0;
+            user-select: text;
+            pointer-events: none;
+        }
+        
+        .instructions {
+            margin-top: 30px;
+            text-align: center;
+            padding: 15px;
+            background-color: rgba(40, 40, 40, 0.7);
+            border-radius: 8px;
+            border-left: 3px solid #ff5555;
+        }
+        
+        .highlight {
+            color: #ff5555;
+            font-weight: bold;
+        }
+        
+        .copy-btn {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 25px;
+            background-color: #ff5555;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .copy-btn:hover {
+            background-color: #ff3333;
+            transform: scale(1.05);
+        }
+        
+        footer {
+            margin-top: 40px;
+            text-align: center;
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .glitch {
+            animation: glitch 5s infinite;
+        }
+        
+        @keyframes glitch {
+            0% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(-2px, -2px); }
+            60% { transform: translate(2px, 2px); }
+            80% { transform: translate(2px, -2px); }
+            100% { transform: translate(0); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1 class="glitch">Mess</h1>
+            <p class="subtitle">a strange feeling</p>
+        </header>
+        
+        <div class="text-container">
+            <div class="overlay-text" id="overlayText"></div>
+            <div class="hidden-text" id="hiddenText"></div>
+        </div>
+        
+        <button class="copy-btn" id="copyBtn">copy</button>
+        
+        <div class="instructions">
+            <p>这是啥？</p>
+            <p>尝试选择并复制上面的文本</p>
+            <p>或者直接点击 <span class="highlight">copy</span> 按钮</p>
+        </div>
+    </div>
+
+    <script>
+        // 隐藏的真实信息
+        const hiddenMessage = `亲爱的探索者，
+
+当你看到这段文字时，你已经发现了这个页面的秘密。
+
+在这个信息过载的时代，我们常常被表面的混乱所迷惑。但如果你愿意深入观察，用心发掘，真相往往隐藏在表象之下。
+
+记住：
+1. 不要被表象迷惑
+2. 保持好奇心
+3. 探索未知
+
+这就是我想告诉你的一切。`;
+
+        // 生成随机字符作为覆盖文本
+        function generateRandomText(length) {
+            const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?/~`';
+            let result = '';
+            for (let i = 0; i < length; i++) {
+                result += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return result;
+        }
+
+        // 初始化页面
+        function initPage() {
+            const overlayText = document.getElementById('overlayText');
+            const hiddenText = document.getElementById('hiddenText');
+            
+            // 设置隐藏文本
+            hiddenText.textContent = hiddenMessage;
+            
+            // 生成覆盖文本 - 长度与隐藏文本大致相同
+            const randomText = generateRandomText(hiddenMessage.length * 1.5);
+            overlayText.textContent = randomText;
+            
+            // 添加复制功能
+            document.getElementById('copyBtn').addEventListener('click', function() {
+                copyToClipboard(hiddenMessage);
+                alert('隐藏信息已复制到剪贴板！');
+            });
+            
+            // 添加文本选择时的处理
+            document.addEventListener('copy', function(e) {
+                // 获取选中的文本
+                const selection = window.getSelection().toString();
+                
+                // 如果选中的是覆盖文本，则替换为隐藏信息
+                if (selection && overlayText.contains(document.getSelection().anchorNode)) {
+                    e.preventDefault();
+                    e.clipboardData.setData('text/plain', hiddenMessage);
+                }
+            });
+        }
+        
+        // 复制到剪贴板的辅助函数
+        function copyToClipboard(text) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+        }
+        
+        // 页面加载完成后初始化
+        window.addEventListener('DOMContentLoaded', initPage);
+    </script>
+</body>
+</html>
