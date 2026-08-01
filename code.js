@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         洛谷题解格式检查助手
 // @namespace    http://tampermonkey.net/
-// @version      1.2.1
+// @version      1.3.6
 // @description  检查洛谷题解格式，辅助通过审核
 // @match        https://www.luogu.com.cn/article/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @run-at       document-start
-// @author       Sunny_boybgfcxc
+// @author       Sunny_boybgfcxc (luogu uid 1144516)
 // ==/UserScript==
 
 (function () {
@@ -44,7 +44,14 @@
         mod: '\\bmod'
     };
 
-    const BUILTIN_API_KEY = 'e168cc4ee11749ce97e7717cb250b23d.HJKaI14oGuCyrRAK';
+    const BUILTIN_API_KEY = (function () {
+        try {
+            const encoded = 'ZTE2OGNjNGVlMTE3NDljZTk3ZTc3MTdjYjI1MGIyM2QuSEpLYUkxNG9HdUN5clJBSw==';
+            return atob(encoded);
+        } catch (e) {
+            return '';
+        }
+    })();
 
     function getStoredApiKey() {
         let key = GM_getValue('luogu_ai_api_key', '');
@@ -86,12 +93,35 @@
     }
 
     function getEditorContent() {
-        const textarea = document.querySelector('textarea[name=content], textarea#content, textarea');
-        if (textarea) return textarea.value || '';
-        const cmTextarea = document.querySelector('.CodeMirror textarea');
-        if (cmTextarea) return cmTextarea.value || '';
-        const prose = document.querySelector('.ProseMirror,[contenteditable="true"]');
-        if (prose) return prose.innerText || prose.textContent || '';
+        // 1. 优先匹配 contenteditable（洛谷当前编辑器）
+        let el = document.querySelector('[contenteditable="true"]');
+        if (el) {
+            const text = el.innerText || el.textContent || '';
+            if (text.trim()) return text;
+        }
+
+        // 2. 再尝试 textarea
+        el = document.querySelector('textarea[name="content"], textarea#content, textarea');
+        if (el && el.value) return el.value;
+
+        // 3. 再尝试 CodeMirror
+        el = document.querySelector('.CodeMirror textarea');
+        if (el && el.value) return el.value;
+
+        // 4. 再尝试 ProseMirror
+        el = document.querySelector('.ProseMirror');
+        if (el) return el.innerText || el.textContent || '';
+
+        // 5. 最后兜底：所有可见 textarea 中取内容最长的
+        const allTextareas = document.querySelectorAll('textarea:not([hidden])');
+        let best = '';
+        for (let ta of allTextareas) {
+            if (ta.value && ta.value.length > best.length) {
+                best = ta.value;
+            }
+        }
+        if (best) return best;
+
         return '';
     }
 
@@ -168,6 +198,7 @@
             results.push({
                 type: RESULT_TYPE.HARD,
                 message: '题解不应出现求赞、求管理员通过等内容，建议删除。',
+
                 highlight: match[0]
             });
         }
@@ -315,6 +346,7 @@
             results.push({
                 type: RESULT_TYPE.SUGGEST,
                 message: '标题应以 #、##、###、#### 等形式书写，避免将 # 用作强调。',
+
                 highlight: misuse[0]
             });
         }
@@ -331,6 +363,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '检测到大段加粗内容，建议不要大片使用加粗格式。',
+
                     highlight: match[0]
                 });
                 break;
@@ -364,6 +397,7 @@
                     results.push({
                         type: RESULT_TYPE.SUGGEST,
                         message: '列表后接标题时建议在中间留一个空行。',
+
                         highlight: line.trim()
                     });
                 }
@@ -371,6 +405,7 @@
                     results.push({
                         type: RESULT_TYPE.SUGGEST,
                         message: '列表后接代码块时建议在中间留一个空行。',
+
                         highlight: line.trim()
                     });
                 }
@@ -380,7 +415,10 @@
     }
 
     function checkPunctuation(text) {
+        text = text.replace(/&nbsp;/g, ' ');// 新增
         const results = [];
+
+        // 1. 半角逗号
         const commaMatch = text.match(/[\u4e00-\u9fff],[\u4e00-\u9fff]|[\u4e00-\u9fff],|,[\u4e00-\u9fff]/);
         if (commaMatch) {
             results.push({
@@ -389,6 +427,8 @@
                 highlight: commaMatch[0]
             });
         }
+
+        // 2. 半角句号
         const dotMatch = text.match(/[\u4e00-\u9fff]\.[\u4e00-\u9fff]|[\u4e00-\u9fff]\.|\\.[\u4e00-\u9fff]/);
         if (dotMatch) {
             results.push({
@@ -397,6 +437,8 @@
                 highlight: dotMatch[0]
             });
         }
+
+        // 3. 全角空格
         const fullWidthMatch = text.match(/　/);
         if (fullWidthMatch) {
             results.push({
@@ -405,6 +447,8 @@
                 highlight: fullWidthMatch[0]
             });
         }
+
+        // 4. 全角字母数字
         const fullWidthCharMatch = text.match(/[Ａ-Ｚａ-ｚ０-９]/);
         if (fullWidthCharMatch) {
             results.push({
@@ -413,6 +457,87 @@
                 highlight: fullWidthCharMatch[0]
             });
         }
+
+        // 5. 英文冒号
+        const colonMatch = text.match(/[\u4e00-\u9fff]:[\u4e00-\u9fff]|[\u4e00-\u9fff]:|:[\u4e00-\u9fff]/);
+        if (colonMatch) {
+            results.push({
+                type: RESULT_TYPE.SUGGEST,
+                message: '检测到中文上下文中使用英文冒号，建议改为中文全角冒号“：”。',
+                highlight: colonMatch[0]
+            });
+        }
+
+        // 6. 英文分号
+        const semicolonMatch = text.match(/[\u4e00-\u9fff];[\u4e00-\u9fff]|[\u4e00-\u9fff];|;[\u4e00-\u9fff]/);
+        if (semicolonMatch) {
+            results.push({
+                type: RESULT_TYPE.SUGGEST,
+                message: '检测到中文上下文中使用英文分号，建议改为中文全角分号“；”。',
+                highlight: semicolonMatch[0]
+            });
+        }
+
+        // 7. 英文双引号
+        const doubleQuoteMatch = text.match(/[\u4e00-\u9fff]"[^"]*"[\u4e00-\u9fff]|[\u4e00-\u9fff]"|"[\u4e00-\u9fff]/);
+        if (doubleQuoteMatch) {
+            results.push({
+                type: RESULT_TYPE.SUGGEST,
+                message: '检测到中文上下文中使用英文双引号，建议改为中文双引号“ ”（即 “内容” ）。',
+                highlight: doubleQuoteMatch[0]
+            });
+        }
+
+        // 8. 英文单引号
+        const singleQuoteMatch = text.match(/[\u4e00-\u9fff]'[^']*'[\u4e00-\u9fff]|[\u4e00-\u9fff]'|'[\u4e00-\u9fff]/);
+        if (singleQuoteMatch) {
+            results.push({
+                type: RESULT_TYPE.SUGGEST,
+                message: '检测到中文上下文中使用英文单引号，建议改为中文单引号‘ ’（即 ‘内容’ ）。',
+                highlight: singleQuoteMatch[0]
+            });
+        }
+
+        // 9. 中文句子末尾标点检查（跳过标题、列表、代码行等）
+        const lines = text.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i].trim();
+            if (!line) continue;
+            if (/^```/.test(line) || /^ {4,}/.test(line) || /^\t/.test(line)) continue;
+            if (/^#+ /.test(line)) continue;
+            if (/^\$\$/.test(line) || /^\$.+\$$/.test(line)) continue;
+            if (/^[-+*]\s/.test(line) || /^\d+\.\s/.test(line)) continue;
+            if (/^\[.+?\]\(.+?\)$/.test(line)) continue;
+            if (/^!\[.*?\]\(.+?\)$/.test(line)) continue;
+            line = line.replace(/^(&nbsp;)+/, '');
+            if (line.length < 5) continue;
+            const hasChinese = /[\u4e00-\u9fff]/.test(line);
+            if (hasChinese) {
+                const lastChar = line.slice(-1);
+                if (/[。！？]$/.test(line)) {
+                    // 正确
+                } else if (/[.!?]$/.test(line)) {
+                    let suggest = '';
+                    if (lastChar === '.') suggest = '“。”';
+                    else if (lastChar === '!') suggest = '“！”';
+                    else if (lastChar === '?') suggest = '“？”';
+                    results.push({
+                        type: RESULT_TYPE.SUGGEST,
+                        message: `中文句子末尾建议使用中文标点${suggest}，避免使用英文标点“${lastChar}”。`,
+                        highlight: line.slice(-10)
+                    });
+                } else {
+                    if (!/[：:；;]$/.test(line)) {
+                        results.push({
+                            type: RESULT_TYPE.SUGGEST,
+                            message: '中文句子末尾缺少句号，建议添加“。”。',
+                            highlight: line.slice(-20)
+                        });
+                    }
+                }
+            }
+        }
+
         return results;
     }
 
@@ -423,6 +548,7 @@
             results.push({
                 type: RESULT_TYPE.SUGGEST,
                 message: '中文与英文、数字之间建议使用半角空格分隔。',
+
                 highlight: match[0]
             });
         }
@@ -442,6 +568,46 @@
                         highlight: key
                     });
                 }
+            }
+            if (/\bmod\b/.test(formula) && !/\\bmod/.test(formula) && !/\\pmod/.test(formula) && !/\\operatorname/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.HARD,
+                    message: '取模运算应使用 \\bmod，例如 $a \\bmod b = c$。',
+                    highlight: 'mod'
+                });
+            }
+            // 2) 检测 \mod（带空格）建议改用 \bmod
+            if (/\\mod\b/.test(formula) && !/\\bmod/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '取模运算建议使用 \\bmod 而非 \\mod。',
+                    highlight: '\\mod'
+                });
+            }
+            // 3) 检测同余符号 ≡
+            if (/≡/.test(formula) && !/\\equiv/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '同余符号应使用 \\equiv，避免使用 Unicode ≡。',
+                    highlight: '≡'
+                });
+            }
+            // 4) 检测 \pmod 是否缺少（若有 ≡ 但无 \pmod，提示）
+            if (/≡/.test(formula) && !/\\pmod/.test(formula) && !/\\equiv/.test(formula)) {
+                // 已经提示 ≡ 了，不用重复，但可额外提示使用 \pmod
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '同余应使用 \\pmod{...} 表示模数，例如 $a \\equiv c \\pmod b$。',
+                    highlight: '≡'
+                });
+            }
+            // 5) 检测 (mod 写法，如 a ≡ c (mod b) 建议改为 \pmod
+            if (/\(mod\b/.test(formula) && !/\\pmod/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '同余模数应使用 \\pmod{...}，避免使用 "(mod ...)"。',
+                    highlight: '(mod'
+                });
             }
         }
         return results;
@@ -470,10 +636,28 @@
 
         for (const formula of formulas) {
             // 现有检查保留
-            if (/\bN\b/.test(formula) && /\\in/.test(formula) && !/\\mathbb\{N\}/.test(formula)) {
+            // 检测公式中是否出现大写数集字母但未使用 \mathbb{}
+            const setLetters = ['N', 'Z', 'Q', 'R', 'C'];
+            let hasIssue = false;
+            for (const letter of setLetters) {
+                const regex = new RegExp(`\\b${letter}\\b`, 'g');
+                if (regex.test(formula) && !new RegExp(`\\\\mathbb\\{${letter}\\}`).test(formula)) {
+                    const match = formula.match(new RegExp(`\\b${letter}\\b`));
+                    if (match) {
+                        const idx = match.index;
+                        const before = formula.slice(0, idx);
+                        if (new RegExp(`\\\\operatorname\\{${letter}\\}`).test(formula)) continue;
+                        if (new RegExp(`\\\\mathrm\\{${letter}\\}`).test(formula)) continue;
+                        if (new RegExp(`\\\\text\\{${letter}\\}`).test(formula)) continue;
+                        hasIssue = true;
+                        break;
+                    }
+                }
+            }
+            if (hasIssue) {
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
-                    message: '集合符号建议使用 \\mathbb{N} / \\mathbb{Z} 等形式表示，例如 $\\mathbb{N}$。',
+                    message: '数集符号（如 N、Z、Q、R、C）应使用 \\mathbb{} 表示，例如 \\mathbb{N}。请检查公式中的数集字母。',
                     highlight: formula
                 });
             }
@@ -481,6 +665,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '公式中的乘号建议使用 \\times 而不是 *。',
+
                     highlight: '*'
                 });
             }
@@ -488,6 +673,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '公式中建议使用 \\le 代替 <=。',
+
                     highlight: '<='
                 });
             }
@@ -495,6 +681,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '公式中建议使用 \\ge 代替 >=。',
+
                     highlight: '>='
                 });
             }
@@ -503,6 +690,7 @@
                     results.push({
                         type: RESULT_TYPE.SUGGEST,
                         message: '波浪线建议使用 \\sim。',
+
                         highlight: '~'
                     });
                 }
@@ -514,6 +702,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '请使用 \\pm 表示正负号，例如 $\\pm$，避免写成 "+-" 或 "+/-"。',
+
                     highlight: formula.match(/\+\-|\+\/-/)[0]
                 });
             }
@@ -522,6 +711,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '竖线建议使用 \\mid/\\vert 等 LaTeX 命令（视语境表示整除或条件），避免直接使用 |。',
+
                     highlight: '|'
                 });
             }
@@ -530,22 +720,29 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '点乘建议使用 \\cdot，例如 $\\cdot$。',
+
                     highlight: formula.match(/[·⋅]/)[0]
                 });
             }
             // 4) 数字间用 x 作为乘号（如 3 x 4）建议用 \\times
-            if (/\d\s*x\s*\d/.test(formula) && !/\\times/.test(formula)) {
-                results.push({
-                    type: RESULT_TYPE.SUGGEST,
-                    message: '若表示乘法请使用 \\times 而非字母 x，例如 $\\times$。',
-                    highlight: 'x'
-                });
+            if (/\b[a-zA-Z]\s*x\s*[a-zA-Z]\b/.test(formula) && !/\\times/.test(formula)) {
+                const matched = formula.match(/\b[a-zA-Z]\s*x\s*[a-zA-Z]\b/)[0];
+                // 如果这个片段包含 xor、max、min 等，跳过
+                const combined = matched.replace(/\s/g, '').toLowerCase();
+                if (!/(xor|max|min|and|or)/.test(combined)) {
+                    results.push({
+                        type: RESULT_TYPE.SUGGEST,
+                        message: '字母间的乘号建议使用 \\times 而不是 x。',
+                        highlight: 'x'
+                    });
+                }
             }
             // 5) != 建议使用 \ne
             if (/!=/.test(formula) && !/\\ne/.test(formula)) {
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '不等号建议使用 \\ne，避免使用 !=。',
+
                     highlight: '!='
                 });
             }
@@ -555,6 +752,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '省略号建议使用 \\ldots 而非连续英文句点。',
+
                     highlight: dots
                 });
             }
@@ -563,18 +761,410 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '复杂分式建议使用 \\frac{...}{...} 提高可读性，简单 a/b 可视情况保留。',
+
                     highlight: '/'
                 });
             }
+            // 检查 Unicode 不等号 ≠
+            if (/≠/.test(formula) && !/\\ne/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '不等号建议使用 \\ne，避免使用 Unicode 字符 ≠。',
+                    highlight: '≠'
+                });
+            }
+
+            // 检查 Unicode 小于等于 ≤
+            if (/≤/.test(formula) && !/\\le/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '小于等于建议使用 \\le，避免使用 Unicode 字符 ≤。',
+                    highlight: '≤'
+                });
+            }
+
+            // 检查 Unicode 大于等于 ≥
+            if (/≥/.test(formula) && !/\\ge/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '大于等于建议使用 \\ge，避免使用 Unicode 字符 ≥。',
+                    highlight: '≥'
+                });
+            }
+            // --- 集合运算符号的 Unicode 检查 ---
+            // ∈
+            if (/∈/.test(formula) && !/\\in/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '属于符号建议使用 \\in，避免使用 Unicode ∈。',
+                    highlight: '∈'
+                });
+            }
+            // ∉
+            if (/∉/.test(formula) && !/\\notin/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '不包含于符号建议使用 \\notin，避免使用 Unicode ∉。',
+                    highlight: '∉'
+                });
+            }
+            // ⊆
+            if (/⊆/.test(formula) && !/\\subseteq/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '子集符号建议使用 \\subseteq，避免使用 Unicode ⊆。',
+                    highlight: '⊆'
+                });
+            }
+            // ⊂
+            if (/⊂/.test(formula) && !/\\subset/.test(formula) && !/\\subseteq/.test(formula)) {
+                // 注意 ⊂ 可能被用作真子集或子集，根据上下文建议 \subset 或 \subseteq
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '子集符号建议使用 \\subset 或 \\subseteq，避免使用 Unicode ⊂。',
+                    highlight: '⊂'
+                });
+            }
+            // ⊊
+            if (/⊊/.test(formula) && !/\\subsetneq/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '真子集符号建议使用 \\subsetneq，避免使用 Unicode ⊊。',
+                    highlight: '⊊'
+                });
+            }
+            // ∪
+            if (/∪/.test(formula) && !/\\cup/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '并集符号建议使用 \\cup，避免使用 Unicode ∪。',
+                    highlight: '∪'
+                });
+            }
+            // ∩
+            if (/∩/.test(formula) && !/\\cap/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '交集符号建议使用 \\cap，避免使用 Unicode ∩。',
+                    highlight: '∩'
+                });
+            }
+            // ========== 统一处理所有 Unicode 数学符号 ==========
+
+            // 1. 赋值与箭头
+            if (/←/.test(formula) && !/\\gets|\\leftarrow/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '赋值符号建议使用 \\gets 或 \\leftarrow，避免使用 Unicode ←。',
+                    highlight: '←'
+                });
+            }
+            if (/→/.test(formula) && !/\\to|\\rightarrow/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '箭头建议使用 \\to 或 \\rightarrow，避免使用 Unicode →。',
+                    highlight: '→'
+                });
+            }
+            if (/∀/.test(formula) && !/\\forall/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '全称量词建议使用 \\forall，避免使用 Unicode ∀。',
+                    highlight: '∀'
+                });
+            }
+            if (/∃/.test(formula) && !/\\exists/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '存在量词建议使用 \\exists，避免使用 Unicode ∃。',
+                    highlight: '∃'
+                });
+            }
+
+            // 2. 逻辑符号
+            if (/¬/.test(formula) && !/\\neg|\\lnot/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '逻辑非建议使用 \\neg 或 \\lnot，避免使用 Unicode ¬。',
+                    highlight: '¬'
+                });
+            }
+            if (/∧/.test(formula) && !/\\wedge|\\land/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '逻辑与建议使用 \\wedge 或 \\land，避免使用 Unicode ∧。',
+                    highlight: '∧'
+                });
+            }
+            if (/∨/.test(formula) && !/\\vee|\\lor/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '逻辑或建议使用 \\vee 或 \\lor，避免使用 Unicode ∨。',
+                    highlight: '∨'
+                });
+            }
+            if (/⊕/.test(formula) && !/\\oplus/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '异或建议使用 \\oplus，避免使用 Unicode ⊕。',
+                    highlight: '⊕'
+                });
+            }
+
+            // 3. 关系与集合（补充已有检查）
+            if (/⊆/.test(formula) && !/\\subseteq/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '子集符号建议使用 \\subseteq，避免使用 Unicode ⊆。',
+                    highlight: '⊆'
+                });
+            }
+            if (/⊊/.test(formula) && !/\\subsetneq/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '真子集符号建议使用 \\subsetneq，避免使用 Unicode ⊊。',
+                    highlight: '⊊'
+                });
+            }
+            // ⊂ 可能被误用，给出通用建议
+            if (/⊂/.test(formula) && !/\\subset/.test(formula) && !/\\subseteq/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '子集符号建议使用 \\subset 或 \\subseteq，避免使用 Unicode ⊂。',
+                    highlight: '⊂'
+                });
+            }
+            // ∪ 和 ∩ 已有检查，但再保一遍
+            if (/∪/.test(formula) && !/\\cup/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '并集符号建议使用 \\cup，避免使用 Unicode ∪。',
+                    highlight: '∪'
+                });
+            }
+            if (/∩/.test(formula) && !/\\cap/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '交集符号建议使用 \\cap，避免使用 Unicode ∩。',
+                    highlight: '∩'
+                });
+            }
+
+            // 4. 其他常用符号
+            if (/∞/.test(formula) && !/\\infty/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '无穷符号建议使用 \\infty，避免使用 Unicode ∞。',
+                    highlight: '∞'
+                });
+            }
+            if (/±/.test(formula) && !/\\pm/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '正负号建议使用 \\pm，避免使用 Unicode ±。',
+                    highlight: '±'
+                });
+            }
+            if (/∓/.test(formula) && !/\\mp/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '负正号建议使用 \\mp，避免使用 Unicode ∓。',
+                    highlight: '∓'
+                });
+            }
+            if (/∠/.test(formula) && !/\\angle/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '角度符号建议使用 \\angle，避免使用 Unicode ∠。',
+                    highlight: '∠'
+                });
+            }
+            if (/∅/.test(formula) && !/\\emptyset|\\varnothing/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '空集建议使用 \\emptyset 或 \\varnothing，避免使用 Unicode ∅。',
+                    highlight: '∅'
+                });
+            }
+            if (/∵/.test(formula) && !/\\because/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '因为符号建议使用 \\because，避免使用 Unicode ∵。',
+                    highlight: '∵'
+                });
+            }
+            if (/∴/.test(formula) && !/\\therefore/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '所以符号建议使用 \\therefore，避免使用 Unicode ∴。',
+                    highlight: '∴'
+                });
+            }
+            // 定义符号 := 或 =: 建议使用 \coloneqq 或 \eqqcolon
+            if (/:=[^=]/.test(formula) && !/\\coloneqq/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '赋值定义建议使用 \\coloneqq (:=)，避免使用普通冒号等号。',
+                    highlight: ':='
+                });
+            }
+            // ========== 大型运算符 ==========
+            // ∑ → \sum
+            if (/∑/.test(formula) && !/\\sum/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '求和符号建议使用 \\sum，避免使用 Unicode ∑。',
+                    highlight: '∑'
+                });
+            }
+            // ∏ → \prod
+            if (/∏/.test(formula) && !/\\prod/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '求积符号建议使用 \\prod，避免使用 Unicode ∏。',
+                    highlight: '∏'
+                });
+            }
+            // ⋃ → \bigcup
+            if (/⋃/.test(formula) && !/\\bigcup/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '并集符号建议使用 \\bigcup，避免使用 Unicode ⋃。',
+                    highlight: '⋃'
+                });
+            }
+            // ⋂ → \bigcap
+            if (/⋂/.test(formula) && !/\\bigcap/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '交集符号建议使用 \\bigcap，避免使用 Unicode ⋂。',
+                    highlight: '⋂'
+                });
+            }
+            // ⨁ → \bigoplus（异或求和）
+            if (/⨁/.test(formula) && !/\\bigoplus/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '异或求和建议使用 \\bigoplus，避免使用 Unicode ⨁。',
+                    highlight: '⨁'
+                });
+            }
+            // ⨂ → \bigotimes（张量积）
+            if (/⨂/.test(formula) && !/\\bigotimes/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '张量积符号建议使用 \\bigotimes，避免使用 Unicode ⨂。',
+                    highlight: '⨂'
+                });
+            }
+            // ⨆ → \bigsqcup（不相交并）
+            if (/⨆/.test(formula) && !/\\bigsqcup/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '不相交并集建议使用 \\bigsqcup，避免使用 Unicode ⨆。',
+                    highlight: '⨆'
+                });
+            }
+            // --- 检查普通文本中的波浪号 ~ 和竖线 | ---
+            // 跳过代码块，只在纯文本中检测
+            const plainText = text.replace(/```[\s\S]*?```/g, ' ');
+            // 检查 ~（不在公式中）
+            if (/~/.test(plainText) && !/\$.*~.*\$/.test(plainText)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '检测到波浪号 ~，如果在公式中应使用 \\sim；在普通文本中建议改为中文连接号“至”或保留。',
+                    highlight: '~'
+                });
+            }
+            // 检查 |（不在公式中）
+            if (/\|/.test(plainText) && !/\$.*\|.*\$/.test(plainText)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '检测到竖线 |，如果在公式中应使用 \\mid 或 \\vert；在普通文本中建议改为中文标点或保留。',
+                    highlight: '|'
+                });
+            }
         }
+        return results;
+    }
+    function checkFormulaCommonErrors(text) {
+        const results = [];
+        const formulas = extractFormulas(text);
+
+        for (const formula of formulas) {
+            // 省略号
+            if (/\.{3}/.test(formula) && !/\\ldots/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '省略号建议使用 \\ldots 而非三个点。',
+                    highlight: formula.match(/\.{3,}/)[0]
+                });
+            }
+            // 乘号
+            if (/\*/.test(formula) && !/\\times/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '乘号建议使用 \\times 而不是 *。',
+                    highlight: '*'
+                });
+            }
+            // 等号前后空格
+            if (/[^ ]=[^ ]/.test(formula) && !/==/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.INFO,
+                    message: '公式中的等号前后建议保留空格，例如 $a = b$。',
+                    highlight: '='
+                });
+            }
+            // 科学计数法
+            if (/\d+e\d+/.test(formula) && !/\\times/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '科学计数法建议使用 \\times 10^{...}，例如 $5 \\times 10^9$。',
+                    highlight: formula.match(/\d+e\d+/)[0]
+                });
+            }
+            // 字母间 x 作为乘号
+            // 避免误报字母间的 x（如 xor、max 等）
+            if (/[0-9]\s*x\s*[0-9]/.test(formula) && !/\\times/.test(formula)) {
+                // 数字 × 数字
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '数字间的乘号建议使用 \\times 而不是 x。',
+                    highlight: formula.match(/[0-9]\s*x\s*[0-9]/)[0]
+                });
+            } else if (/[0-9]\s*x\s*[a-zA-Z]/.test(formula) && !/\\times/.test(formula)) {
+                // 数字 × 字母
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '数字与字母间的乘号建议使用 \\times 而不是 x。',
+                    highlight: formula.match(/[0-9]\s*x\s*[a-zA-Z]/)[0]
+                });
+            } else if (/[a-zA-Z]\s*x\s*[0-9]/.test(formula) && !/\\times/.test(formula)) {
+                // 字母 × 数字
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '字母与数字间的乘号建议使用 \\times 而不是 x。',
+                    highlight: formula.match(/[a-zA-Z]\s*x\s*[0-9]/)[0]
+                });
+            }
+            // 字母 × 字母 的情况容易误报（如 xor），不再检测
+        }
+
         return results;
     }
 
     function checkFormulaStyle(text) {
         const results = [];
         const formulas = extractFormulas(text);
+
+        // 匹配拆分公式的常见模式：$...$ 运算符 $...$
+        const splitPattern = /\$[^$]+\$\s*([+\-=>≤≥≠∈⊆⊂∪∩∧∨]|\b(?:le|ge|ne|in|subseteq|subset|cup|cap|land|lor)\b)\s*\$[^$]+\$/;
+        // 同时检测连续多个 $...$ 但没有运算符的情况，也可能是拆分
+        const multipleFormulas = /(\$[^$]+\$){2,}/;
+
         for (const formula of formulas) {
-            if (/\$[^$]+\$\s*\+\s*\$[^$]+\$/.test(formula) || /\$[^$]+\$\s*=\s*\$[^$]+\$/.test(formula) || /\$[^$]+\$\s*<\s*\$[^$]+\$/.test(formula)) {
+            if (splitPattern.test(formula) || multipleFormulas.test(formula)) {
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '建议将同一个数学表达式写在一个 LaTeX 公式环境内，不要拆成多个 $...$。',
@@ -583,6 +1173,72 @@
                 break;
             }
         }
+
+        return results;
+    }
+
+    function checkMathEnvironment(text) {
+        const results = [];
+        const formulas = extractFormulas(text);
+
+        for (const formula of formulas) {
+            // 1) 连等式：检测是否包含多个 = 但未使用 aligned 或 split 环境
+            const eqCount = (formula.match(/=/g) || []).length;
+            if (eqCount >= 2 && !/\\begin\{aligned\}|\\begin\{split\}|\\begin\{align\}/.test(formula)) {
+                // 排除那些本身就是一行多公式的情况（如 a=b, c=d），但一般不会出现在一个公式中
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '连等式建议使用 \\begin{aligned} ... \\end{aligned} 环境，将多行等式对齐。',
+                    highlight: formula
+                });
+            }
+
+            // 2) 分段函数：检测是否包含 \cases 或 \begin{cases} 但未使用
+            // 检测是否有 \left\{ ... \right. 或 \begin{array} 但未用 cases
+            if (/\\left\\\{/.test(formula) && /\\right\\./.test(formula) && !/\\begin\{cases\}/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '分段函数建议使用 \\begin{cases} ... \\end{cases} 环境，避免手动构造花括号。',
+                    highlight: formula
+                });
+            }
+            // 检测是否有 \begin{array} 但用于分段函数（通常 array 应改为 cases）
+            if (/\\begin\{array\}/.test(formula) && /\\left\\\{/.test(formula) && !/\\begin\{cases\}/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '分段函数建议使用 \\begin{cases} 代替 \\begin{array}，更简洁规范。',
+                    highlight: formula
+                });
+            }
+
+            // 3) 矩阵：检测是否包含矩阵相关命令但未使用 bmatrix
+            // 检测 \begin{pmatrix} 或 \begin{bmatrix} 等未用 bmatrix
+            if (/\\begin\{pmatrix\}/.test(formula) && !/\\begin\{bmatrix\}/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '矩阵建议使用 \\begin{bmatrix} ... \\end{bmatrix} 环境，括号更美观。',
+                    highlight: '\\begin{pmatrix}'
+                });
+            }
+            // 检测 \begin{array} 但用于矩阵（应改为 bmatrix）
+            if (/\\begin\{array\}/.test(formula) && /[()\[\]]/.test(formula) && !/\\begin\{bmatrix\}/.test(formula)) {
+                // 简单判断：如果 array 前后有括号，且未用 bmatrix
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '矩阵建议使用 \\begin{bmatrix} ... \\end{bmatrix} 环境，避免手动构造括号。',
+                    highlight: formula
+                });
+            }
+            // 检测 \left[ \right] 包围的 array 但未用 bmatrix
+            if (/\\left\[/.test(formula) && /\\begin\{array\}/.test(formula) && !/\\begin\{bmatrix\}/.test(formula)) {
+                results.push({
+                    type: RESULT_TYPE.SUGGEST,
+                    message: '矩阵建议使用 \\begin{bmatrix} 环境，避免手动构造方括号。',
+                    highlight: formula
+                });
+            }
+        }
+
         return results;
     }
 
@@ -594,6 +1250,7 @@
                 results.push({
                     type: RESULT_TYPE.INFO,
                     message: '建议代码中使用有意义变量名和简洁注释，避免过度混淆。',
+
                     highlight: block.slice(0, 80)
                 });
                 break;
@@ -603,6 +1260,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '检测到可能的防抄袭内容，建议删除无意义或混淆性的代码注释。',
+
                     highlight: antiMatch[0]
                 });
             }
@@ -648,48 +1306,80 @@
 
         return null;
     }
+    function safeJsonParse(str) {
+        if (typeof str !== 'string') return null;
 
+        // 1. 尝试直接解析
+        try {
+            return JSON.parse(str);
+        } catch (e) { }
+
+        // 2. 转义所有未转义的控制字符
+        // 注意：只替换真实的换行符、回车、制表符，不破坏已有的转义序列
+        let fixed = str
+            .replace(/\n/g, '\\n')// 真实换行 -> \n
+            .replace(/\r/g, '\\r')// 真实回车 -> \r
+            .replace(/\t/g, '\\t');// 真实制表 -> \t
+
+        try {
+            return JSON.parse(fixed);
+        } catch (e) { }
+
+        // 3. 如果还失败，尝试更激进的清理：移除所有控制字符（但保留空格）
+        // 这一步可能破坏数据，作为最后的尝试
+        let cleaned = str.replace(/[\x00-\x1F\x7F]/g, function (m) {
+            // 将控制字符转为对应的转义序列，或直接移除（安全起见转为空格）
+            if (m === '\n') return '\\n';
+            if (m === '\r') return '\\r';
+            if (m === '\t') return '\\t';
+            return ' '; // 其他控制字符替换为空格
+        });
+        try {
+            return JSON.parse(cleaned);
+        } catch (e) { }
+
+        return null;
+    }
     function extractAiJsonPayload(text) {
         if (typeof text !== 'string' || !text.trim()) return null;
 
         let cleaned = text
-            .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '') // 移除零宽字符
-            .replace(/&nbsp;/g, ' ') // HTML 实体转空格
-            .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '') // 零宽字符
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&lt;/g, '<').replace(/&gt;/g, '')
             .replace(/&amp;/g, '&').replace(/&quot;/g, '"')
             .trim();
 
-        // 1. 直接解析
-        try { return JSON.parse(cleaned); } catch (e) { }
+        // 1. 直接解析（使用 safeJsonParse）
+        let result = safeJsonParse(cleaned);
+        if (result !== null) return result;
 
-        // 2. 提取 ```json ... ``` 代码块
+        // 2. 提取 ```json ... ```
         const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
         if (fenced) {
-            try { return JSON.parse(fenced[1].trim()); } catch (e) { }
+            result = safeJsonParse(fenced[1].trim());
+            if (result !== null) return result;
         }
 
-        // 3. 提取第一个 JSON 数组或对象（增强：允许多余文字）
+        // 3. 提取第一个 JSON 数组或对象
         const jsonMatch = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
         if (jsonMatch) {
-            let jsonStr = jsonMatch[1];
-            // 修复常见问题：尾部多余逗号、键名缺少引号
-            jsonStr = jsonStr.replace(/,\s*}/g, '}').replace(/,\s*\]/g, ']');
-            jsonStr = jsonStr.replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":');
-            try { return JSON.parse(jsonStr); } catch (e) { }
+            let jsonStr = jsonMatch[1]
+                .replace(/,\s*}/g, '}').replace(/,\s*\]/g, ']')
+                .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":');
+            result = safeJsonParse(jsonStr);
+            if (result !== null) return result;
         }
 
-        // 4. 提取中文冒号后的数组（如 "结果："）
-        const chineseArray = cleaned.match(/[：:]\s*(\[[\s\S]*\])/);
-        if (chineseArray) {
-            try { return JSON.parse(chineseArray[1]); } catch (e) { }
-        }
-
-        // 5. 暴力遍历所有看起来像 JSON 的片段
+        // 4. 暴力遍历所有候选 JSON
         const candidates = cleaned.match(/(\[[\s\S]*?\]|\{[\s\S]*?\})/g);
         if (candidates) {
-            for (const candidate of candidates) {
-                let c = candidate.replace(/,\s*}/g, '}').replace(/,\s*\]/g, ']');
-                try { return JSON.parse(c); } catch (e) { }
+            for (let c of candidates) {
+                let fixed = c
+                    .replace(/,\s*}/g, '}').replace(/,\s*\]/g, ']')
+                    .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":');
+                result = safeJsonParse(fixed);
+                if (result !== null) return result;
             }
         }
 
@@ -790,7 +1480,7 @@
                 <span id="luogu-format-ai-progress-text" style="color:#409eff;font-weight:600;">0%</span>
             </div>
             <div style="height:8px;background:#eef2f7;border-radius:999px;overflow:hidden;">
-                <div id="luogu-format-ai-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#409eff,#67c23a);transition:width 0.25s ease;border-radius:999px;"></div>
+                <div id="luogu-format-ai-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#409eff,#67c23a);transition:width 0.25s ease,border-radius:999px;"></div>
             </div>
             <div id="luogu-format-ai-progress-meta" style="margin-top:8px;color:#666;font-size:12px;">预计耗时：60 秒</div>
         `;
@@ -842,7 +1532,7 @@
                             content: prompt
                         }
                     ],
-                    max_tokens: 800
+                    max_tokens: 2000
                 }),
                 timeout: 60000,
                 onload(response) {
@@ -891,7 +1581,9 @@
 
     function runAICheck(formulas, textContext) {
         formulas = Array.isArray(formulas) ? formulas : [];
-        const CONTEXT_SNIPPET = (textContext || '').slice(0, 5000);
+        const CONTEXT_SNIPPET = (textContext || '')
+            .replace(/\r\n?/g, '\n')
+            .slice(0, 5000);
 
         const prompt = `
 你是洛谷题解格式检查助手，目标是结合全文上下文与 LaTeX 公式给出更主观且有价值的建议。
@@ -903,17 +1595,20 @@
 - rule: 可选，表明是哪条规则（例如 "heading-abuse", "operator-operator", "special-char"）
 
 请检查（但不限于）：
-1) 是否滥用标题行（例如大量无实际内容的 H2/H3、把段落拆成过多标题、章节层级跳跃、或使用标题行来强调与解题无关的内容），如果是，请指出相关标题片段并给出建议。
-2) 公式中是否将函数名、操作名直接写为普通字符而未使用 \\operatorname{}（例如写 'lcm'、'mod' 等而未 math 环境中使用 \\operatorname{}），或是否缺少应有的 \\mathrm/\\operatorname 包裹。
+1) 是否滥用标题行（例如大量无实际内容的 H2/H3、把段落拆成过多标题、章节层级跳跃、或使用标题行来强调与解题无关的内容），如果是，请指出相关标题片段并给出建议。注意：标题行是单独的一行，以 # 开头，内容仅限该行本身，不应包含后续段落。当你要为标题问题提供 highlight 和 context 时，**必须只提取该标题行的原文本（例如 "## 题意简述"），不允许包含下一行的任何内容。**另：标题行的功能是标明章节主题，不要求标题本身包含详细信息。如果标题行本身很简短（如“题意简述”、“代码实现”），这是**合理的、符合规范的写法**，不应因此建议“精简标题”或“扩充标题”。只有当标题行超过 20 个字符时，才可酌情建议精简。**特别地，标题行中如果包含冒号（如“题解：测试AI题解”），冒号后的内容属于标题的一部分，不应视为“内容过多”。请勿仅因标题包含冒号而建议精简。**
+2) 公式中是否将函数名、操作名直接写为普通字符而未使用 \\operatorname{}（例如写 'lcm'、'mod'、'xor'、'or'、'and' 等而未 math 环境中使用 \\operatorname{}），或是否缺少应有的 \\mathrm/\\operatorname 包裹。
 3) 是否在公式中直接写了英文专有名词、变量应该用斜体但写成普通文字，或出现特殊字符未用对应 LaTeX 命令（如 ~、| 等）。
 4) 是否存在主观性的结构或风格问题（例如不当的标题拆分、重复的短标题、段落过短等），并给出建议与可定位片段。
-5) 是否存在对于非函数名、变量名及常数的英文单词、人名或缩写使用公式的情况，如 Catalan 写成 $Catalan$，并给出修改建议及可定位片段。
+5) 检查是否存在将专有名词（如人名 Catalan、Euler）、普通英文单词或缩写错误地写在 $...$ 公式中的情况。正确的做法是移出公式改为正文，而不是在公式中保留并修改字体。例如：$Catalan$ 应改为正文中的 Catalan（不加公式）。
 6) 是否存在大量无关内容，如 '求管理员通过' 或 '蒟蒻的第一篇题解' 。
-
+7) 检查题解的思路是否逻辑清晰，其推理是否严谨且无漏洞，你需检查其逻辑性并在出现逻辑漏洞时明确指出。
+8) 是否在文本中出现了大量加粗（一般超出一句话），并请指出。
+9) 检测 \\left 和 \\right 是否匹配（比如 \\left( 但没有对应的 \\right)，或者 \\{ 没有对应的 \\} ）。
 特别注意：
 - 你只需要判断是否存在以上情况，其它的事情都不关你事。
 - 不应出现两条相似的建议。
-- 忽略代码,但不要忘记该题解有代码实现。
+- 你要检查文本前后是否具有逻辑性，是否连贯以及是否通俗易懂。
+- 你应当只注重代码的可读性，应忽略代码的结构和变量命名，特别的是，代码不是公式，不应去检查其格式。
 - 公式列表仅作为上下文参考，不要把它们当成需要逐条检查的“待点评对象”。如果某个公式不在当前可定位上下文内，或者你无法确定它与前文的对应关系，请不要给出评价。
 - 只有在确实存在明确、可验证的格式/LaTeX 规范问题时，才给出修改建议。不要误报、不要把普通变量、中文术语、常数、专有名词或不确定的写法强行改成 LaTeX 命令。
 - 对函数名/操作符的修改建议要准确：只有当它们明确作为数学函数或运算符出现时，才建议使用 \\operatorname{}、\\mathrm{}、\\log 等；普通变量名或一般文字不应被误判。
@@ -926,25 +1621,54 @@
 - 对每一条问题尽量提供 highlight 或 context 以便前端高亮显示。
 - 你要保证 highlight 的长度小于 context 的长度。
 - 请尽量把每条问题拆成更小的、可单独展示的条目；如果一个建议包含多个子问题，请拆成多条 JSON 对象，注意这些对象万万不能相同。
+- 对于专有名词（如 Catalan、Euler）误入公式的情况，建议“移出公式改为正文”，而不是“改为斜体”或“改为正体”。
+- 对于标题行相关的问题，highlight 和 context 字段必须严格限制在该标题行自身的文本范围内（即从 # 到该行结尾），不得包含该标题行之后任何段落的内容。如果标题行本身内容过短（少于 5 个字符），可以在 message 中说明，但 highlight 仍只取标题行本身。
+- 标题行是独立的行，以 # 开头，即使多个标题行连续出现，也必须将它们视为单独的标题分别评估，不得合并。
 
-以下是题目解说的上下文（供理解整体内容），你的任务是检查从这行以下的文本。
+以下是题目解说的上下文（供理解整体内容），你的任务是检查从这行以下的文本。请将下面内容按原始换行文本处理，不要把它压成一整段：
+
+\`\`\`text
 ${CONTEXT_SNIPPET}
+\`\`\`
 
 以下是正文中已提取出的公式片段（供参考，这些公式本身已经是 LaTeX 格式，请勿重复检查这些片段，只把它们作为上下文来理解作者意图）：
 ${formulas.join('\n')}
 
 请返回 JSON 数组，而且请**只返回** JSON 数组，**不要**添加任何解释文字、Markdown 标记或额外内容。
 你的回复必须是一个合法的 JSON 数组，以 '[' 开头，以 ']' 结尾。
-        `.trim();
+`.trim();
 
         return callAI(prompt)
             .then(response => {
-                if (!response || typeof response !== 'string') return [];
+                if (!response || typeof response !== 'string') {
+                    console.warn('AI 回复为空');
+                    return [{
+                        type: RESULT_TYPE.INFO,
+                        message: 'AI 未返回有效内容，请重试。',
+                        highlight: '',
+                        context: ''
+                    }];
+                }
 
-                const parsed = extractAiJsonPayload(response);
+                console.log('AI 原始回复:', response);
+
+                let parsed = null;
+                try {
+                    parsed = JSON.parse(response);
+                    console.log('直接解析成功', parsed);
+                } catch (e) {
+                    console.warn('直接解析失败，尝试 extractAiJsonPayload', e);
+                    parsed = extractAiJsonPayload(response);
+                    console.log('extractAiJsonPayload 结果', parsed);
+                }
+
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    parsed = [parsed];
+                    console.log('已转换为数组:', parsed);
+                }
+
                 if (Array.isArray(parsed) && parsed.length > 0) {
-                    // 直接映射成我们需要的格式
-                    return parsed
+                    const mapped = parsed
                         .filter(item => item.message && item.message.trim())
                         .map(item => ({
                             type: item.type || RESULT_TYPE.SUGGEST,
@@ -952,21 +1676,71 @@ ${formulas.join('\n')}
                             highlight: item.highlight || '',
                             context: item.context || '',
                             rule: item.rule || ''
-                        }));
+                        }))
+                        .filter(item => {
+                            // 过滤：如果建议是关于“标题内容过多”的，且 highlight 是短标题（≤20字符），则过滤掉
+                            const msg = item.message || '';
+                            if (/标题.*内容过多/.test(msg) || /精简标题/.test(msg) || /标题行内容过多/.test(msg)) {
+                                const hl = item.highlight || '';
+                                // 如果 highlight 以 # 开头且长度 ≤ 25（包含 # 和空格），认为是短标题，过滤
+                                if (/^#+ /.test(hl) && hl.length <= 25) {
+                                    console.log('过滤短标题“内容过多”建议:', hl);
+                                    return false;
+                                }
+                            }
+                            // 如果 highlight 是纯链接行（[text](url)），也过滤（防止 AI 对链接报句号等）
+                            if (/^\[.+?\]\(.+?\)$/.test(item.highlight || '')) {
+                                console.log('过滤纯链接建议:', item.highlight);
+                                return false;
+                            }
+                            return true;
+                        });
+
+                    if (mapped.length > 0) {
+                        console.log('AI 建议数量（过滤后）:', mapped.length);
+                        return mapped;
+                    }
+                    return [{
+                        type: RESULT_TYPE.INFO,
+                        message: 'AI 返回了空建议（可能全被过滤），请查看控制台原始回复。',
+                        highlight: '',
+                        context: ''
+                    }];
                 }
 
-                // 如果解析失败，返回空数组（不显示任何东西）
-                return [];
+                return [{
+                    type: RESULT_TYPE.INFO,
+                    message: 'AI 建议解析失败，请查看控制台原始回复。',
+                    highlight: '',
+                    context: ''
+                }];
             })
-            .catch(err => {
-                console.warn('AI 公式检查失败：', err);
-                return [];
-            });
     }
 
     let lastCheckedText = '';
 
+    function getAiCheckEnabled() {
+        try {
+            const saved = GM_getValue('luogu_format_ai_enabled', null);
+            if (saved === null || saved === undefined) return true;
+            return saved === true || saved === 'true' || saved === 1 || saved === '1';
+        } catch (e) {
+            return true;
+        }
+    }
+
+    function setAiCheckEnabled(enabled) {
+        try {
+            GM_setValue('luogu_format_ai_enabled', !!enabled);
+        } catch (e) {
+            // ignore
+        }
+    }
+
     async function runCheck() {
+        // 先关闭已有的浮窗
+        const oldPanel = document.getElementById('luogu-format-result-panel');
+        if (oldPanel) oldPanel.remove();
         let rawText = getEditorContent();
         if (!rawText) {
             console.log('编辑器尚未加载，等待 2 秒后重试...');
@@ -996,13 +1770,15 @@ ${formulas.join('\n')}
             ...checkOperators(strippedText),
             ...checkProperNouns(strippedText),
             ...checkMathSymbols(strippedText),
+            ...checkFormulaCommonErrors(strippedText),
             ...checkFormulaStyle(strippedText),
-            ...checkCodeStyle(rawText)
+            ...checkCodeStyle(rawText),
+            ...checkMathEnvironment(strippedText)
         ];
 
         // 仅在有 API Key 时调用 AI 检查；并捕获错误以防止阻断主流程
         var aiResults = [];
-        if (getStoredApiKey()) {
+        if (getAiCheckEnabled() && getStoredApiKey()) {
             var aiOverlay = null;
             try {
                 aiOverlay = showAiThinkingOverlay();
@@ -1014,10 +1790,16 @@ ${formulas.join('\n')}
                 hideAiThinkingOverlay(aiOverlay);
             }
         } else {
-            console.warn('未配置 API Key，已跳过 AI 检查。');
+            if (!getAiCheckEnabled()) {
+                console.warn('AI 检查已关闭，已跳过 AI 检查。');
+            } else {
+                console.warn('未配置 API Key，已跳过 AI 检查。');
+            }
         }
 
         var allResults = results.concat(aiResults);
+        // 注意：不过滤已忽略，让它们在面板中显示并由 showResultPanel 决定是否显示恢复按钮
+        // allResults = allResults.filter(issue => !isIgnored(issue));
 
         if (allResults.length === 0) {
             allResults.push({
@@ -1062,6 +1844,7 @@ ${formulas.join('\n')}
         btn.style.fontSize = '18px';
         btn.style.userSelect = 'none';
         btn.style.transition = 'left 220ms ease, top 220ms ease';
+        btn.style.touchAction = 'none';
 
         // 初始位置：优先使用持久化位置
         try {
@@ -1086,7 +1869,163 @@ ${formulas.join('\n')}
 
         body.appendChild(btn);
 
-        // 拖拽逻辑（Pointer Events）
+        // --- 选项面板 ---
+        const optionsPanel = document.createElement('div');
+        optionsPanel.id = 'luogu-format-options-panel';
+        optionsPanel.style.cssText = `
+            position: fixed;
+            z-index: 999999;
+            width: 220px;
+            padding: 10px 12px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            box-shadow: 0 10px 22px rgba(0,0,0,.16);
+            opacity: 0;
+            pointer-events: none;
+            transform: translateX(6px);
+            transition: opacity .16s ease, transform .16s ease;
+        `;
+        optionsPanel.innerHTML = `
+            <div style="font-size:12px;font-weight:600;color:#333;margin-bottom:8px;">选项</div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#222;cursor:pointer;">
+                <input id="luogu-format-ai-toggle" type="checkbox">
+                <span>启用 AI 检查</span>
+            </label>
+            <button id="luogu-format-options-run" style="
+                display:block;
+                width:100%;
+                padding:6px 0;
+                margin-top:8px;
+                border:none;
+                border-radius:6px;
+                background:#409eff;
+                color:#fff;
+                cursor:pointer;
+                font-size:12px;
+            ">立即检查</button>
+            <button id="luogu-format-options-reset-ignore" style="
+                display:block;
+                width:100%;
+                padding:6px 0;
+                margin-top:6px;
+                border:none;
+                border-radius:6px;
+                background:#f56c6c;
+                color:#fff;
+                cursor:pointer;
+                font-size:12px;
+            ">重置忽略</button>
+        `;
+        body.appendChild(optionsPanel);
+
+        let optionsPanelHideTimer = null;
+
+        function clampPanelValue(v, a, b) {
+            return Math.max(a, Math.min(b, v));
+        }
+
+        function clearOptionsPanelHideTimer() {
+            if (optionsPanelHideTimer) {
+                clearTimeout(optionsPanelHideTimer);
+                optionsPanelHideTimer = null;
+            }
+        }
+
+        function scheduleOptionsPanelHide() {
+            clearOptionsPanelHideTimer();
+            optionsPanelHideTimer = setTimeout(hideOptionsPanel, 120);
+        }
+
+        function updateOptionsPanelPosition() {
+            const rect = btn.getBoundingClientRect();
+            const panelWidth = optionsPanel.offsetWidth || 220;
+            const panelHeight = optionsPanel.offsetHeight || 140;
+            let left = rect.right + 10;
+            let top = rect.top;
+
+            left = clampPanelValue(left, 8, window.innerWidth - panelWidth - 8);
+            top = clampPanelValue(top, 8, window.innerHeight - panelHeight - 8);
+
+            optionsPanel.style.left = left + 'px';
+            optionsPanel.style.top = top + 'px';
+        }
+
+        function showOptionsPanel() {
+            clearOptionsPanelHideTimer();
+            optionsPanel.style.opacity = '1';
+            optionsPanel.style.pointerEvents = 'auto';
+            optionsPanel.style.transform = 'translateX(0)';
+            requestAnimationFrame(updateOptionsPanelPosition);
+        }
+
+        function hideOptionsPanel() {
+            clearOptionsPanelHideTimer();
+            optionsPanel.style.opacity = '0';
+            optionsPanel.style.pointerEvents = 'none';
+            optionsPanel.style.transform = 'translateX(6px)';
+        }
+
+        // ---- AI 开关 ----
+        const aiToggle = optionsPanel.querySelector('#luogu-format-ai-toggle');
+        if (aiToggle) {
+            aiToggle.checked = getAiCheckEnabled();
+            aiToggle.addEventListener('change', function () {
+                setAiCheckEnabled(aiToggle.checked);
+            });
+        }
+
+        // ---- 立即检查按钮 ----
+        const runPanelBtn = optionsPanel.querySelector('#luogu-format-options-run');
+        if (runPanelBtn) {
+            runPanelBtn.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                showOptionsPanel();
+                runCheck();
+            });
+        }
+
+        // ---- 重置忽略按钮 ----
+        const resetIgnoreBtn = optionsPanel.querySelector('#luogu-format-options-reset-ignore');
+        if (resetIgnoreBtn) {
+            resetIgnoreBtn.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                if (confirm('确定重置所有忽略的建议吗？')) {
+                    clearIgnoredKeys();
+                    hideOptionsPanel();
+                    runCheck();
+                }
+            });
+        }
+
+        // ---- 按钮悬停显示面板 ----
+        btn.addEventListener('pointerenter', showOptionsPanel);
+        btn.addEventListener('pointerleave', function (ev) {
+            const related = ev.relatedTarget || ev.toElement || null;
+            if (related && (btn.contains(related) || optionsPanel.contains(related))) {
+                return;
+            }
+            scheduleOptionsPanelHide();
+        });
+
+        optionsPanel.addEventListener('pointerenter', showOptionsPanel);
+        optionsPanel.addEventListener('pointerleave', function (ev) {
+            const related = ev.relatedTarget || ev.toElement || null;
+            if (related && (btn.contains(related) || optionsPanel.contains(related))) {
+                return;
+            }
+            scheduleOptionsPanelHide();
+        });
+
+        document.addEventListener('pointerdown', function (ev) {
+            const target = ev.target;
+            if (btn.contains(target) || optionsPanel.contains(target)) return;
+            hideOptionsPanel();
+        }, true);
+
+        // ---- 按钮拖拽逻辑（与面板互不干扰） ----
         let dragging = false;
         let startX = 0, startY = 0;
         let startLeft = 0, startTop = 0;
@@ -1099,6 +2038,10 @@ ${formulas.join('\n')}
         function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
         btn.addEventListener('pointerdown', function (ev) {
+            // 拖动开始时强制隐藏面板并取消任何定时显示
+            hideOptionsPanel();
+            clearOptionsPanelHideTimer();
+
             if (ev.button !== 0) return;
             ev.preventDefault();
             btn.setPointerCapture(ev.pointerId);
@@ -1173,7 +2116,6 @@ ${formulas.join('\n')}
             btn.style.transition = 'left 220ms ease, top 220ms ease';
         });
 
-        // resize 时确保按钮仍在可视区域
         window.addEventListener('resize', function () {
             try {
                 const saved = GM_getValue('luogu_format_btn_pos', null);
@@ -1189,7 +2131,10 @@ ${formulas.join('\n')}
                 GM_setValue('luogu_format_btn_pos', JSON.stringify({ left, top }));
             } catch (e) { }
         });
+
+        return true;
     }
+
     function initButton() {
         if (addCheckButton()) return;
         var observer = new MutationObserver(function () {
@@ -1255,7 +2200,6 @@ ${formulas.join('\n')}
         }
 
         function expandByPunctuation(text, start, end, ranges) {
-            // 把换行也当作标点边界
             const punct = /[。．！？：:；;,.?!\r\n]/;
             let left = start;
             while (left > 0) {
@@ -1275,7 +2219,6 @@ ${formulas.join('\n')}
             return text.slice(left, right).trim();
         }
 
-        // 新增：返回带索引的片段，便于高亮定位
         function expandByPunctuationWithIndices(text, start, end, ranges) {
             const punct = /[。．！？：:；;,.?!\r\n]/;
             let left = start;
@@ -1301,34 +2244,22 @@ ${formulas.join('\n')}
                 .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
-        // 返回已转义并对 highlight 部分进行 <mark> 高亮的 HTML 字符串
         function getSnippetHtml(issue) {
             if (issue.context) return escapeHtml(issue.context);
-
-            const quoteMatch = issue.message && issue.message.match(/[“"‘']([^“"‘']+)[”"’']/);
-            const fallback = quoteMatch ? quoteMatch[1] : '';
-
-            if (!issue.highlight) {
-                return escapeHtml(fallback || '');
-            }
-
             const base = issue.highlight;
+            if (!base) return '';
             if (lastCheckedText) {
-                const ranges = findFormulaRanges(lastCheckedText);
-                const idx = findSafeIndex(lastCheckedText, base, ranges);
-                if (idx !== -1) {
-                    const { left, right, excerpt } = expandByPunctuationWithIndices(lastCheckedText, idx, idx + base.length, ranges);
-                    const relStart = idx - left;
-                    const relEnd = relStart + base.length;
-                    const before = escapeHtml(excerpt.slice(0, relStart));
-                    const key = escapeHtml(excerpt.slice(relStart, relEnd));
-                    const after = escapeHtml(excerpt.slice(relEnd));
-                    // 高亮样式可自定义
-                    return `${before}<mark style="background:#fff2a8;color:#000;border-radius:3px;padding:0 4px;">${key}</mark>${after}`;
+                const sentences = lastCheckedText.split(/(?<=[。！？\n])/);
+                for (const sentence of sentences) {
+                    if (sentence.includes(base)) {
+                        const idx = sentence.indexOf(base);
+                        const before = escapeHtml(sentence.slice(0, idx));
+                        const key = escapeHtml(sentence.slice(idx, idx + base.length));
+                        const after = escapeHtml(sentence.slice(idx + base.length));
+                        return `${before}<mark style="background:#fff2a8;color:#000;border-radius:3px;padding:0 4px;">${key}</mark>${after}`;
+                    }
                 }
             }
-
-            // 未能定位到上下文则仅返回高亮文本本身
             return `<mark style="background:#fff2a8;color:#000;border-radius:3px;padding:0 4px;">${escapeHtml(base)}</mark>`;
         }
 
@@ -1353,7 +2284,6 @@ ${formulas.join('\n')}
             user-select: none;
         `;
 
-        // 在浮窗最上端显示题目名称
         const titleBar = document.createElement('div');
         titleBar.style.cssText = `
             padding: 8px 14px;
@@ -1401,6 +2331,7 @@ ${formulas.join('\n')}
         panel.appendChild(header);
 
         const content = document.createElement('div');
+        content.className = 'luogu-format-panel-content';
         content.style.cssText = `
             padding: 12px 16px;
             overflow-y: auto;
@@ -1409,21 +2340,39 @@ ${formulas.join('\n')}
             user-select: text;
             line-height: 1.6;
         `;
-
+        // ---- 渲染每条建议（包括已忽略的） ----
         for (const issue of results) {
+            const isIgnoredNow = isIgnored(issue);
+            const key = getIssueKey(issue);
             const item = document.createElement('div');
             item.style.cssText = `
                 padding: 6px 0;
                 border-bottom: 1px solid #f0f0f0;
                 font-size: 13px;
+                opacity: ${isIgnoredNow ? '0.5' : '1'};
             `;
             const snippetHtml = getSnippetHtml(issue);
             item.innerHTML = `
-                <div style="display:flex;align-items:flex-start;gap:6px;">
-                    <span style="flex-shrink:0;">${issue.type}</span>
-                    <span style="word-break:break-word;">${escapeHtml(issue.message)}</span>
+                <div style="display:flex;align-items:flex-start;gap:6px;justify-content:space-between;">
+                    <div style="display:flex;align-items:flex-start;gap:6px;flex:1;">
+                        <span style="flex-shrink:0;">${issue.type}</span>
+                        <span style="word-break:break-word;">${escapeHtml(issue.message)}</span>
+                    </div>
+                    <button class="luogu-ignore-btn" data-key="${escapeHtml(key)}" style="
+                        background: none;
+                        border: none;
+                        color: ${isIgnoredNow ? '#409eff' : '#999'};
+                        cursor: pointer;
+                        font-size: 14px;
+                        padding: 0 4px;
+                        flex-shrink: 0;
+                        line-height: 1;
+                    " title="${isIgnoredNow ? '恢复此建议' : '忽略此建议'}">
+                        ${isIgnoredNow ? '↩' : '✕'}
+                    </button>
                 </div>
                 ${snippetHtml ? `<div style="margin-top:6px;font-size:12px;color:#333;background:#f7f8fa;padding:6px 10px;border-radius:6px;font-family:monospace;">📌 ${snippetHtml}</div>` : ''}
+                ${isIgnoredNow ? `<div style="margin-top:4px;font-size:11px;color:#999;">（已忽略，点击 ↩ 恢复）</div>` : ''}
             `;
             content.appendChild(item);
         }
@@ -1455,15 +2404,59 @@ ${formulas.join('\n')}
 
         document.body.appendChild(panel);
 
+        // ---- 关闭按钮 ----
         document.getElementById('luogu-format-panel-close').addEventListener('click', () => panel.remove());
+
+        // ---- 重新检查按钮 ----
         document.getElementById('luogu-format-panel-refresh').addEventListener('click', () => {
             panel.remove();
             runCheck();
         });
 
+        // ---- 忽略/恢复按钮事件委托 ----
+        panel.addEventListener('click', function (e) {
+            const btn = e.target.closest('.luogu-ignore-btn');
+            if (!btn) return;
+            const key = btn.dataset.key;
+            if (!key) return;
+
+            // ---- 保存当前滚动位置 ----
+            const contentEl = panel.querySelector('.luogu-format-panel-content');
+            const scrollTop = contentEl ? contentEl.scrollTop : 0;
+
+            // ---- 切换忽略状态 ----
+            const currentIgnored = getIgnoredKeys();
+            const isNowIgnored = currentIgnored.includes(key);
+            if (isNowIgnored) {
+                removeIgnoredKey(key);
+            } else {
+                addIgnoredKey(key);
+            }
+
+            // ---- 获取问题内容用于提示 ----
+            const issue = results.find(r => getIssueKey(r) === key);
+            const issueMsg = issue ? issue.message : '';
+
+            // ---- 重新渲染面板 ----
+            panel.remove();
+            showResultPanel(results);
+
+            // ---- 恢复滚动位置 ----
+            const newPanel = document.getElementById('luogu-format-result-panel');
+            const newContent = newPanel ? newPanel.querySelector('.luogu-format-panel-content') : null;
+            if (newContent && scrollTop > 0) {
+                newContent.scrollTop = scrollTop;
+            }
+
+            // ---- Toast 提示 ----
+            const action = isNowIgnored ? '已恢复' : '已忽略';
+            const emoji = isNowIgnored ? '↩' : '✅';
+            showToast(`${emoji} ${action}：${issueMsg}`, isNowIgnored ? '#409eff' : '#52c41a');
+        });
+
+        // ---- 拖拽逻辑 ----
         let isDragging = false;
-        let offsetX = 0;
-        let offsetY = 0;
+        let offsetX = 0, offsetY = 0;
 
         function getClient(e) {
             return {
@@ -1504,13 +2497,57 @@ ${formulas.join('\n')}
             panel.style.cursor = 'move';
         }
 
-        // 让 header、titleBar（和 panel 顶部）都能启动拖拽，增强可点击区域
         [header, titleBar].forEach(el => {
             el.style.cursor = 'move';
             el.addEventListener('pointerdown', startDrag);
         });
         document.addEventListener('pointermove', onDrag);
         document.addEventListener('pointerup', endDrag);
+    }
+
+    function showToast(message, color = '#52c41a') {
+        // 移除已有 toast
+        const oldToast = document.getElementById('luogu-format-toast');
+        if (oldToast) oldToast.remove();
+
+        const toast = document.createElement('div');
+        toast.id = 'luogu-format-toast';
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 9999999;
+            padding: 10px 24px;
+            background: ${color};
+            color: #fff;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+            opacity: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            pointer-events: none;
+            max-width: 80vw;
+            text-align: center;
+        `;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        // 触发淡入
+        requestAnimationFrame(() => {
+            toast.style.opacity = '1';
+            toast.style.transform = 'translateX(-50%) translateY(-4px)';
+        });
+
+        // 1.8 秒后淡出并移除
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(-50%) translateY(0)';
+            setTimeout(() => {
+                if (toast.parentNode) toast.parentNode.removeChild(toast);
+            }, 300);
+        }, 1800);
     }
 
     function dedupeIssues(issues) {
@@ -1522,6 +2559,41 @@ ${formulas.join('\n')}
             return true;
         });
     }
+    // ----- 忽略列表管理 -----
+    function getIgnoredKeys() {
+        try {
+            const val = GM_getValue('luogu_ignored_issues', '[]');
+            return JSON.parse(val) || [];
+        } catch (e) {
+            return [];
+        }
+    }
 
+    function addIgnoredKey(key) {
+        const keys = getIgnoredKeys();
+        if (!keys.includes(key)) {
+            keys.push(key);
+            GM_setValue('luogu_ignored_issues', JSON.stringify(keys));
+        }
+    }
+
+    function removeIgnoredKey(key) {
+        let keys = getIgnoredKeys();
+        keys = keys.filter(k => k !== key);
+        GM_setValue('luogu_ignored_issues', JSON.stringify(keys));
+    }
+
+    function clearIgnoredKeys() {
+        GM_setValue('luogu_ignored_issues', '[]');
+    }
+
+    function isIgnored(issue) {
+        const key = `${issue.type || ''}||${issue.message || ''}||${issue.highlight || ''}`;
+        return getIgnoredKeys().includes(key);
+    }
+
+    function getIssueKey(issue) {
+        return `${issue.type || ''}||${issue.message || ''}||${issue.highlight || ''}`;
+    }
     //runCheck();
 })();
