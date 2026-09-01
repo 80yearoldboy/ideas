@@ -1,18 +1,34 @@
 // ==UserScript==
 // @name         洛谷题解格式检查助手
 // @namespace    http://tampermonkey.net/
-// @version      1.3.6
+// @version      1.5.2
 // @description  检查洛谷题解格式，辅助通过审核
 // @match        https://www.luogu.com.cn/article/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
+// @require      https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js
+// @require      https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js
+// @require      https://cdn.jsdelivr.net/npm/marked/marked.min.js
+// @require      https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js
+// @resource     katexCSS https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
+// @grant        GM_addStyle
+// @grant        GM_getResourceText
 // @run-at       document-start
-// @author       Sunny_boybgfcxc (luogu uid 1144516)
 // ==/UserScript==
 
-(function () {
+(function () {//contributor: DeepSeek,Copilot Free,Sunny_boybgfcxc (luogu uid 1144516)
     'use strict';
+
+    // 注入 KaTeX 样式（由 @resource 提供）
+    // 获取 KaTeX CSS 原始文本
+    var katexCss = GM_getResourceText('katexCSS');
+    // 将相对路径替换为 CDN 绝对路径
+    var fixedCss = katexCss.replace(/url\(fonts\//g, 'url(https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/');
+    // 注入修改后的 CSS
+    GM_addStyle(fixedCss);
 
     const RESULT_TYPE = {
         HARD: '🔴 硬性错误',
@@ -52,6 +68,37 @@
             return '';
         }
     })();
+
+    const AI_CHAT_SYSTEM_PROMPT = `
+你是洛谷题解格式检查助手，目标是结合全文上下文与 LaTeX 公式给出更主观且有价值的建议。
+请基于用户问题与当前题解原文内容给出中文回答，不要返回 JSON 数组。
+关注点：
+1) 题解结构是否合理，标题层级是否规范，有无标题滥用或章节拆分过度；
+2) 公式中是否直接使用未转义的函数名/运算符（如 lcm、mod、xor、and、or 等）；
+3) 是否把专有名词、普通英文词写在公式中，或者使用了不规范的 Unicode 数学符号；
+4) 是否包含“求赞”“求管理员通过”等无关内容；
+5) 是否存在逻辑不清、段落过短、重复标题、过度加粗等风格问题；
+6) 请尽量给出具体、可执行的建议。
+    `.trim();
+
+    const aiChatState = {
+        history: [{ role: 'system', content: AI_CHAT_SYSTEM_PROMPT }],
+        lastEditorText: '',
+        lastAiCheckSummary: '',
+        aiCheckSummaryInjected: false
+    };
+
+    function createAiCheckSummary(aiResults) {
+        if (!Array.isArray(aiResults) || aiResults.length === 0) return '';
+        const lines = aiResults.slice(0, 6).map((item, index) => {
+            const type = (item.type || '').trim();
+            const msg = (item.message || '').replace(/\s+/g, ' ').trim();
+            const hint = item.highlight ? ` [${item.highlight}]` : '';
+            return `${index + 1}. ${type} ${msg}${hint}`;
+        }).filter(Boolean);
+        if (!lines.length) return '';
+        return `以下是之前 AI 格式检查结果，供本次聊天参考：\n${lines.join('\n')}\n\n`;
+    }
 
     function getStoredApiKey() {
         let key = GM_getValue('luogu_ai_api_key', '');
@@ -444,6 +491,7 @@
             results.push({
                 type: RESULT_TYPE.SUGGEST,
                 message: '检测到全角空格，建议改为半角空格。',
+
                 highlight: fullWidthMatch[0]
             });
         }
@@ -454,6 +502,7 @@
             results.push({
                 type: RESULT_TYPE.SUGGEST,
                 message: '检测到全角英文字母或数字，建议改为半角。',
+
                 highlight: fullWidthCharMatch[0]
             });
         }
@@ -484,6 +533,7 @@
             results.push({
                 type: RESULT_TYPE.SUGGEST,
                 message: '检测到中文上下文中使用英文双引号，建议改为中文双引号“ ”（即 “内容” ）。',
+
                 highlight: doubleQuoteMatch[0]
             });
         }
@@ -494,6 +544,7 @@
             results.push({
                 type: RESULT_TYPE.SUGGEST,
                 message: '检测到中文上下文中使用英文单引号，建议改为中文单引号‘ ’（即 ‘内容’ ）。',
+
                 highlight: singleQuoteMatch[0]
             });
         }
@@ -503,6 +554,8 @@
         for (let i = 0; i < lines.length; i++) {
             let line = lines[i].trim();
             if (!line) continue;
+            // 跳过包含代码特征的行（如 //、/*、#include、变量声明等）
+            if (/\/\/|\/\*|\*\/|#include|int |long |double |char |bool |const /.test(line)) continue;
             if (/^```/.test(line) || /^ {4,}/.test(line) || /^\t/.test(line)) continue;
             if (/^#+ /.test(line)) continue;
             if (/^\$\$/.test(line) || /^\$.+\$$/.test(line)) continue;
@@ -573,6 +626,7 @@
                 results.push({
                     type: RESULT_TYPE.HARD,
                     message: '取模运算应使用 \\bmod，例如 $a \\bmod b = c$。',
+
                     highlight: 'mod'
                 });
             }
@@ -581,6 +635,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '取模运算建议使用 \\bmod 而非 \\mod。',
+
                     highlight: '\\mod'
                 });
             }
@@ -589,6 +644,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '同余符号应使用 \\equiv，避免使用 Unicode ≡。',
+
                     highlight: '≡'
                 });
             }
@@ -598,6 +654,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '同余应使用 \\pmod{...} 表示模数，例如 $a \\equiv c \\pmod b$。',
+
                     highlight: '≡'
                 });
             }
@@ -606,6 +663,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '同余模数应使用 \\pmod{...}，避免使用 "(mod ...)"。',
+
                     highlight: '(mod'
                 });
             }
@@ -658,6 +716,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '数集符号（如 N、Z、Q、R、C）应使用 \\mathbb{} 表示，例如 \\mathbb{N}。请检查公式中的数集字母。',
+
                     highlight: formula
                 });
             }
@@ -733,6 +792,7 @@
                     results.push({
                         type: RESULT_TYPE.SUGGEST,
                         message: '字母间的乘号建议使用 \\times 而不是 x。',
+
                         highlight: 'x'
                     });
                 }
@@ -770,6 +830,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '不等号建议使用 \\ne，避免使用 Unicode 字符 ≠。',
+
                     highlight: '≠'
                 });
             }
@@ -779,6 +840,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '小于等于建议使用 \\le，避免使用 Unicode 字符 ≤。',
+
                     highlight: '≤'
                 });
             }
@@ -788,6 +850,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '大于等于建议使用 \\ge，避免使用 Unicode 字符 ≥。',
+
                     highlight: '≥'
                 });
             }
@@ -797,6 +860,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '属于符号建议使用 \\in，避免使用 Unicode ∈。',
+
                     highlight: '∈'
                 });
             }
@@ -805,6 +869,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '不包含于符号建议使用 \\notin，避免使用 Unicode ∉。',
+
                     highlight: '∉'
                 });
             }
@@ -813,6 +878,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '子集符号建议使用 \\subseteq，避免使用 Unicode ⊆。',
+
                     highlight: '⊆'
                 });
             }
@@ -822,6 +888,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '子集符号建议使用 \\subset 或 \\subseteq，避免使用 Unicode ⊂。',
+
                     highlight: '⊂'
                 });
             }
@@ -830,6 +897,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '真子集符号建议使用 \\subsetneq，避免使用 Unicode ⊊。',
+
                     highlight: '⊊'
                 });
             }
@@ -838,6 +906,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '并集符号建议使用 \\cup，避免使用 Unicode ∪。',
+
                     highlight: '∪'
                 });
             }
@@ -846,6 +915,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '交集符号建议使用 \\cap，避免使用 Unicode ∩。',
+
                     highlight: '∩'
                 });
             }
@@ -856,6 +926,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '赋值符号建议使用 \\gets 或 \\leftarrow，避免使用 Unicode ←。',
+
                     highlight: '←'
                 });
             }
@@ -863,6 +934,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '箭头建议使用 \\to 或 \\rightarrow，避免使用 Unicode →。',
+
                     highlight: '→'
                 });
             }
@@ -870,6 +942,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '全称量词建议使用 \\forall，避免使用 Unicode ∀。',
+
                     highlight: '∀'
                 });
             }
@@ -877,6 +950,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '存在量词建议使用 \\exists，避免使用 Unicode ∃。',
+
                     highlight: '∃'
                 });
             }
@@ -886,6 +960,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '逻辑非建议使用 \\neg 或 \\lnot，避免使用 Unicode ¬。',
+
                     highlight: '¬'
                 });
             }
@@ -893,6 +968,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '逻辑与建议使用 \\wedge 或 \\land，避免使用 Unicode ∧。',
+
                     highlight: '∧'
                 });
             }
@@ -900,6 +976,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '逻辑或建议使用 \\vee 或 \\lor，避免使用 Unicode ∨。',
+
                     highlight: '∨'
                 });
             }
@@ -907,6 +984,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '异或建议使用 \\oplus，避免使用 Unicode ⊕。',
+
                     highlight: '⊕'
                 });
             }
@@ -916,6 +994,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '子集符号建议使用 \\subseteq，避免使用 Unicode ⊆。',
+
                     highlight: '⊆'
                 });
             }
@@ -923,6 +1002,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '真子集符号建议使用 \\subsetneq，避免使用 Unicode ⊊。',
+
                     highlight: '⊊'
                 });
             }
@@ -931,6 +1011,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '子集符号建议使用 \\subset 或 \\subseteq，避免使用 Unicode ⊂。',
+
                     highlight: '⊂'
                 });
             }
@@ -939,6 +1020,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '并集符号建议使用 \\cup，避免使用 Unicode ∪。',
+
                     highlight: '∪'
                 });
             }
@@ -946,6 +1028,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '交集符号建议使用 \\cap，避免使用 Unicode ∩。',
+
                     highlight: '∩'
                 });
             }
@@ -955,6 +1038,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '无穷符号建议使用 \\infty，避免使用 Unicode ∞。',
+
                     highlight: '∞'
                 });
             }
@@ -962,6 +1046,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '正负号建议使用 \\pm，避免使用 Unicode ±。',
+
                     highlight: '±'
                 });
             }
@@ -969,6 +1054,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '负正号建议使用 \\mp，避免使用 Unicode ∓。',
+
                     highlight: '∓'
                 });
             }
@@ -976,6 +1062,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '角度符号建议使用 \\angle，避免使用 Unicode ∠。',
+
                     highlight: '∠'
                 });
             }
@@ -983,6 +1070,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '空集建议使用 \\emptyset 或 \\varnothing，避免使用 Unicode ∅。',
+
                     highlight: '∅'
                 });
             }
@@ -990,6 +1078,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '因为符号建议使用 \\because，避免使用 Unicode ∵。',
+
                     highlight: '∵'
                 });
             }
@@ -997,6 +1086,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '所以符号建议使用 \\therefore，避免使用 Unicode ∴。',
+
                     highlight: '∴'
                 });
             }
@@ -1005,6 +1095,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '赋值定义建议使用 \\coloneqq (:=)，避免使用普通冒号等号。',
+
                     highlight: ':='
                 });
             }
@@ -1014,6 +1105,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '求和符号建议使用 \\sum，避免使用 Unicode ∑。',
+
                     highlight: '∑'
                 });
             }
@@ -1022,6 +1114,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '求积符号建议使用 \\prod，避免使用 Unicode ∏。',
+
                     highlight: '∏'
                 });
             }
@@ -1030,6 +1123,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '并集符号建议使用 \\bigcup，避免使用 Unicode ⋃。',
+
                     highlight: '⋃'
                 });
             }
@@ -1038,6 +1132,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '交集符号建议使用 \\bigcap，避免使用 Unicode ⋂。',
+
                     highlight: '⋂'
                 });
             }
@@ -1046,6 +1141,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '异或求和建议使用 \\bigoplus，避免使用 Unicode ⨁。',
+
                     highlight: '⨁'
                 });
             }
@@ -1054,6 +1150,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '张量积符号建议使用 \\bigotimes，避免使用 Unicode ⨂。',
+
                     highlight: '⨂'
                 });
             }
@@ -1062,6 +1159,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '不相交并集建议使用 \\bigsqcup，避免使用 Unicode ⨆。',
+
                     highlight: '⨆'
                 });
             }
@@ -1073,6 +1171,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '检测到波浪号 ~，如果在公式中应使用 \\sim；在普通文本中建议改为中文连接号“至”或保留。',
+
                     highlight: '~'
                 });
             }
@@ -1081,6 +1180,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '检测到竖线 |，如果在公式中应使用 \\mid 或 \\vert；在普通文本中建议改为中文标点或保留。',
+
                     highlight: '|'
                 });
             }
@@ -1097,6 +1197,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '省略号建议使用 \\ldots 而非三个点。',
+
                     highlight: formula.match(/\.{3,}/)[0]
                 });
             }
@@ -1105,6 +1206,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '乘号建议使用 \\times 而不是 *。',
+
                     highlight: '*'
                 });
             }
@@ -1113,6 +1215,7 @@
                 results.push({
                     type: RESULT_TYPE.INFO,
                     message: '公式中的等号前后建议保留空格，例如 $a = b$。',
+
                     highlight: '='
                 });
             }
@@ -1121,6 +1224,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '科学计数法建议使用 \\times 10^{...}，例如 $5 \\times 10^9$。',
+
                     highlight: formula.match(/\d+e\d+/)[0]
                 });
             }
@@ -1131,6 +1235,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '数字间的乘号建议使用 \\times 而不是 x。',
+
                     highlight: formula.match(/[0-9]\s*x\s*[0-9]/)[0]
                 });
             } else if (/[0-9]\s*x\s*[a-zA-Z]/.test(formula) && !/\\times/.test(formula)) {
@@ -1138,6 +1243,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '数字与字母间的乘号建议使用 \\times 而不是 x。',
+
                     highlight: formula.match(/[0-9]\s*x\s*[a-zA-Z]/)[0]
                 });
             } else if (/[a-zA-Z]\s*x\s*[0-9]/.test(formula) && !/\\times/.test(formula)) {
@@ -1145,6 +1251,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '字母与数字间的乘号建议使用 \\times 而不是 x。',
+
                     highlight: formula.match(/[a-zA-Z]\s*x\s*[0-9]/)[0]
                 });
             }
@@ -1168,6 +1275,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '建议将同一个数学表达式写在一个 LaTeX 公式环境内，不要拆成多个 $...$。',
+
                     highlight: formula
                 });
                 break;
@@ -1189,6 +1297,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '连等式建议使用 \\begin{aligned} ... \\end{aligned} 环境，将多行等式对齐。',
+
                     highlight: formula
                 });
             }
@@ -1199,6 +1308,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '分段函数建议使用 \\begin{cases} ... \\end{cases} 环境，避免手动构造花括号。',
+
                     highlight: formula
                 });
             }
@@ -1207,6 +1317,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '分段函数建议使用 \\begin{cases} 代替 \\begin{array}，更简洁规范。',
+
                     highlight: formula
                 });
             }
@@ -1217,6 +1328,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '矩阵建议使用 \\begin{bmatrix} ... \\end{bmatrix} 环境，括号更美观。',
+
                     highlight: '\\begin{pmatrix}'
                 });
             }
@@ -1226,6 +1338,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '矩阵建议使用 \\begin{bmatrix} ... \\end{bmatrix} 环境，避免手动构造括号。',
+
                     highlight: formula
                 });
             }
@@ -1234,6 +1347,7 @@
                 results.push({
                     type: RESULT_TYPE.SUGGEST,
                     message: '矩阵建议使用 \\begin{bmatrix} 环境，避免手动构造方括号。',
+
                     highlight: formula
                 });
             }
@@ -1309,34 +1423,31 @@
     function safeJsonParse(str) {
         if (typeof str !== 'string') return null;
 
-        // 1. 尝试直接解析
-        try {
-            return JSON.parse(str);
-        } catch (e) { }
+        // 先尝试直接解析
+        try { return JSON.parse(str); } catch (e) { }
 
-        // 2. 转义所有未转义的控制字符
-        // 注意：只替换真实的换行符、回车、制表符，不破坏已有的转义序列
-        let fixed = str
-            .replace(/\n/g, '\\n')// 真实换行 -> \n
-            .replace(/\r/g, '\\r')// 真实回车 -> \r
-            .replace(/\t/g, '\\t');// 真实制表 -> \t
+        // 1. 转义所有未转义的反斜杠（后面跟着字母的）
+        let fixed = str.replace(/\\(?![\\"\/bfnrtu])/g, '\\\\');
+        try { return JSON.parse(fixed); } catch (e) { }
 
-        try {
-            return JSON.parse(fixed);
-        } catch (e) { }
+        // 2. 转义控制字符
+        fixed = fixed
+            .replace(/\n/g, '\\n')
+            .replace(/\r/g, '\\r')
+            .replace(/\t/g, '\\t');
+        try { return JSON.parse(fixed); } catch (e) { }
 
-        // 3. 如果还失败，尝试更激进的清理：移除所有控制字符（但保留空格）
-        // 这一步可能破坏数据，作为最后的尝试
-        let cleaned = str.replace(/[\x00-\x1F\x7F]/g, function (m) {
-            // 将控制字符转为对应的转义序列，或直接移除（安全起见转为空格）
-            if (m === '\n') return '\\n';
-            if (m === '\r') return '\\r';
-            if (m === '\t') return '\\t';
-            return ' '; // 其他控制字符替换为空格
-        });
-        try {
-            return JSON.parse(cleaned);
-        } catch (e) { }
+        // 3. 如果还失败，尝试把所有反斜杠双写（更暴力）
+        let doubleEscaped = str.replace(/\\/g, '\\\\');
+        try { return JSON.parse(doubleEscaped); } catch (e) { }
+
+        // 4. 尝试修复尾随逗号
+        let noTrailingComma = str.replace(/,\s*([}\]])/g, '$1');
+        try { return JSON.parse(noTrailingComma); } catch (e) { }
+
+        // 5. 尝试修复键名未加引号
+        let quotedKeys = str.replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":');
+        try { return JSON.parse(quotedKeys); } catch (e) { }
 
         return null;
     }
@@ -1344,24 +1455,24 @@
         if (typeof text !== 'string' || !text.trim()) return null;
 
         let cleaned = text
-            .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '') // 零宽字符
+            .replace(/\u200B|\u200C|\u200D|\uFEFF/g, '')
             .replace(/&nbsp;/g, ' ')
             .replace(/&lt;/g, '<').replace(/&gt;/g, '')
             .replace(/&amp;/g, '&').replace(/&quot;/g, '"')
             .trim();
 
-        // 1. 直接解析（使用 safeJsonParse）
+        // 1. 先尝试直接解析（原样）
         let result = safeJsonParse(cleaned);
         if (result !== null) return result;
 
-        // 2. 提取 ```json ... ```
+        // 2. 提取 ```json ... ``` 或 ``` ... ```
         const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
         if (fenced) {
             result = safeJsonParse(fenced[1].trim());
             if (result !== null) return result;
         }
 
-        // 3. 提取第一个 JSON 数组或对象
+        // 3. 提取第一个 JSON 数组或对象（去除前缀后缀）
         const jsonMatch = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
         if (jsonMatch) {
             let jsonStr = jsonMatch[1]
@@ -1379,6 +1490,17 @@
                     .replace(/,\s*}/g, '}').replace(/,\s*\]/g, ']')
                     .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":');
                 result = safeJsonParse(fixed);
+                if (result !== null) return result;
+            }
+        }
+
+        // 5. 最后尝试：如果整个文本被包裹在 ```json 中但未正常闭合，尝试补全
+        if (cleaned.includes('```json')) {
+            const start = cleaned.indexOf('```json') + 7;
+            const end = cleaned.indexOf('```', start);
+            if (end !== -1) {
+                const inner = cleaned.slice(start, end).trim();
+                result = safeJsonParse(inner);
                 if (result !== null) return result;
             }
         }
@@ -1509,14 +1631,23 @@
         }
     }
 
-    function callAI(prompt) {
-        //const apiKey = getStoredApiKey();
+    function callAI(messages) {
         const apiKey = BUILTIN_API_KEY.trim();
         if (!apiKey) {
             return Promise.reject(new Error('未配置 API Key'));
         }
+
+        let dataMessages;
+        if (typeof messages === 'string') {
+            dataMessages = [{ role: 'user', content: messages }];
+        } else if (Array.isArray(messages)) {
+            dataMessages = messages;
+        } else {
+            return Promise.reject(new Error('callAI: invalid message payload'));
+        }
+
         return new Promise((resolve, reject) => {
-            console.log('callAI: 请求发送（prompt 前5000字符）', (prompt || '').slice(0, 5000));
+            console.log('callAI: 请求发送（prompt 前5000字符）', (JSON.stringify(dataMessages) || '').slice(0, 5000));
             GM_xmlhttpRequest({
                 method: 'POST',
                 url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
@@ -1526,12 +1657,7 @@
                 },
                 data: JSON.stringify({
                     model: 'glm-4-flash',
-                    messages: [
-                        {
-                            role: 'user',
-                            content: prompt
-                        }
-                    ],
+                    messages: dataMessages,
                     max_tokens: 2000
                 }),
                 timeout: 60000,
@@ -1583,7 +1709,6 @@
         formulas = Array.isArray(formulas) ? formulas : [];
         const CONTEXT_SNIPPET = (textContext || '')
             .replace(/\r\n?/g, '\n')
-            .slice(0, 5000);
 
         const prompt = `
 你是洛谷题解格式检查助手，目标是结合全文上下文与 LaTeX 公式给出更主观且有价值的建议。
@@ -1596,14 +1721,14 @@
 
 请检查（但不限于）：
 1) 是否滥用标题行（例如大量无实际内容的 H2/H3、把段落拆成过多标题、章节层级跳跃、或使用标题行来强调与解题无关的内容），如果是，请指出相关标题片段并给出建议。注意：标题行是单独的一行，以 # 开头，内容仅限该行本身，不应包含后续段落。当你要为标题问题提供 highlight 和 context 时，**必须只提取该标题行的原文本（例如 "## 题意简述"），不允许包含下一行的任何内容。**另：标题行的功能是标明章节主题，不要求标题本身包含详细信息。如果标题行本身很简短（如“题意简述”、“代码实现”），这是**合理的、符合规范的写法**，不应因此建议“精简标题”或“扩充标题”。只有当标题行超过 20 个字符时，才可酌情建议精简。**特别地，标题行中如果包含冒号（如“题解：测试AI题解”），冒号后的内容属于标题的一部分，不应视为“内容过多”。请勿仅因标题包含冒号而建议精简。**
-2) 公式中是否将函数名、操作名直接写为普通字符而未使用 \\operatorname{}（例如写 'lcm'、'mod'、'xor'、'or'、'and' 等而未 math 环境中使用 \\operatorname{}），或是否缺少应有的 \\mathrm/\\operatorname 包裹。
+2) 检查公式中是否**直接写了未转义的函数名**（如单独出现 'lcm'、'mod'、'xor'、'and'、'or' 等，而没有被 '\\operatorname{}' 或 '\\mathrm{}' 包裹）。**注意：如果已经使用了 '\\operatorname{}' 或 '\\mathrm{}'，则视为正确，不需要建议修改。**
 3) 是否在公式中直接写了英文专有名词、变量应该用斜体但写成普通文字，或出现特殊字符未用对应 LaTeX 命令（如 ~、| 等）。
 4) 是否存在主观性的结构或风格问题（例如不当的标题拆分、重复的短标题、段落过短等），并给出建议与可定位片段。
 5) 检查是否存在将专有名词（如人名 Catalan、Euler）、普通英文单词或缩写错误地写在 $...$ 公式中的情况。正确的做法是移出公式改为正文，而不是在公式中保留并修改字体。例如：$Catalan$ 应改为正文中的 Catalan（不加公式）。
 6) 是否存在大量无关内容，如 '求管理员通过' 或 '蒟蒻的第一篇题解' 。
 7) 检查题解的思路是否逻辑清晰，其推理是否严谨且无漏洞，你需检查其逻辑性并在出现逻辑漏洞时明确指出。
 8) 是否在文本中出现了大量加粗（一般超出一句话），并请指出。
-9) 检测 \\left 和 \\right 是否匹配（比如 \\left( 但没有对应的 \\right)，或者 \\{ 没有对应的 \\} ）。
+9) 检测 \\left 和 \\right 是否匹配（比如 \\left( 但没有对应的 \\right)，或者 \\{ 没有对应的 \\}  ）。
 特别注意：
 - 你只需要判断是否存在以上情况，其它的事情都不关你事。
 - 不应出现两条相似的建议。
@@ -1678,21 +1803,27 @@ ${formulas.join('\n')}
                             rule: item.rule || ''
                         }))
                         .filter(item => {
-                            // 过滤：如果建议是关于“标题内容过多”的，且 highlight 是短标题（≤20字符），则过滤掉
                             const msg = item.message || '';
-                            if (/标题.*内容过多/.test(msg) || /精简标题/.test(msg) || /标题行内容过多/.test(msg)) {
-                                const hl = item.highlight || '';
-                                // 如果 highlight 以 # 开头且长度 ≤ 25（包含 # 和空格），认为是短标题，过滤
-                                if (/^#+ /.test(hl) && hl.length <= 25) {
-                                    console.log('过滤短标题“内容过多”建议:', hl);
-                                    return false;
-                                }
-                            }
-                            // 如果 highlight 是纯链接行（[text](url)），也过滤（防止 AI 对链接报句号等）
-                            if (/^\[.+?\]\(.+?\)$/.test(item.highlight || '')) {
-                                console.log('过滤纯链接建议:', item.highlight);
+                            const hl = item.highlight || '';
+
+                            // 1. 过滤：已用 \operatorname 但 AI 仍报“未转义”
+                            if (/未转义/.test(msg) && /\\operatorname/.test(hl)) {
+                                console.log('过滤AI误报：已用 \\operatorname 但AI仍报', hl);
                                 return false;
                             }
+
+                            // 2. 过滤：标题行被误判为“内容过多”
+                            if (/标题行内容过多/.test(msg) && /^#+ /.test(hl)) {
+                                console.log('过滤AI误报：标题行被误判为内容过多', hl);
+                                return false;
+                            }
+
+                            // 3. 过滤：标题行被误判为“无关内容”
+                            if (/无关内容/.test(msg) && /^#+ /.test(hl)) {
+                                console.log('过滤AI误报：标题行被误判为无关内容', hl);
+                                return false;
+                            }
+
                             return true;
                         });
 
@@ -1737,6 +1868,450 @@ ${formulas.join('\n')}
         }
     }
 
+    function getAiChatEnabled() {
+        try {
+            const saved = GM_getValue('luogu_format_ai_chat_enabled', null);
+            if (saved === null || saved === undefined) return false;
+            return saved === true || saved === 'true' || saved === 1 || saved === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function setAiChatEnabled(enabled) {
+        try {
+            GM_setValue('luogu_format_ai_chat_enabled', !!enabled);
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    function updateAiChatButtonState() {
+        const enabled = getAiChatEnabled();
+        const existing = document.getElementById('luogu-ai-chat-button');
+        if (existing) existing.remove();
+        const panel = document.getElementById('luogu-ai-chat-panel');
+        if (!enabled && panel) panel.remove();
+        updateAiChatOpenButtonState();
+    }
+
+    function updateAiChatOpenButtonState() {
+        const openBtn = document.getElementById('luogu-format-ai-chat-open');
+        if (!openBtn) return;
+        const enabled = getAiChatEnabled();
+        openBtn.disabled = !enabled;
+        openBtn.style.opacity = enabled ? '1' : '0.6';
+        openBtn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+    }
+
+    function escapeHtml(str) {
+        return (str || '').toString()
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // 主渲染函数
+    function renderAiChatBubbleContent(bubble, content) {
+        if (!bubble) return;
+        if (!content) {
+            bubble.textContent = '';
+            return;
+        }
+
+        if (content.length > 2000) {
+            bubble.textContent = content;
+            return;
+        }
+
+        try {
+            let html = window.marked.parse(content, { breaks: true });
+            html = window.DOMPurify.sanitize(html);
+            bubble.innerHTML = html;
+
+            // 手动处理 $$...$$ 行间公式（支持换行）
+            var walker = document.createTreeWalker(
+                bubble,
+                NodeFilter.SHOW_TEXT,
+                {
+                    acceptNode: function (node) {
+                        return node.nodeValue.includes('$$') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                    }
+                }
+            );
+
+            var textNodes = [];
+            while (walker.nextNode()) {
+                textNodes.push(walker.currentNode);
+            }
+
+            for (var i = 0; i < textNodes.length; i++) {
+                var node = textNodes[i];
+                var text = node.nodeValue;
+                // 修改正则：[\s\S]+? 匹配任意字符（包括换行）
+                var regex = /\$\$([\s\S]+?)\$\$/g;
+                var fragment = document.createDocumentFragment();
+                var lastIndex = 0;
+                var match;
+
+                while ((match = regex.exec(text)) !== null) {
+                    if (match.index > lastIndex) {
+                        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+                    }
+                    var formula = match[1];
+                    try {
+                        var container = document.createElement('div');
+                        container.style.textAlign = 'center';
+                        container.style.margin = '8px 0';
+                        window.katex.render(formula, container, {
+                            displayMode: true,
+                            throwOnError: false
+                        });
+                        fragment.appendChild(container);
+                    } catch (e) {
+                        fragment.appendChild(document.createTextNode(match[0]));
+                    }
+                    lastIndex = match.index + match[0].length;
+                }
+
+                if (lastIndex < text.length) {
+                    fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+                }
+
+                node.parentNode.replaceChild(fragment, node);
+            }
+
+            // 再用 auto-render 处理行内公式（避免处理 $$）
+            if (typeof renderMathInElement !== 'undefined') {
+                window.renderMathInElement(bubble, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: false },
+                        { left: '$', right: '$', display: false },
+                        { left: '\\[', right: '\\]', display: true },
+                        { left: '\\(', right: '\\)', display: false }
+                    ],
+                    throwOnError: false
+                });
+            }
+
+        } catch (e) {
+            console.warn('[渲染] 渲染失败，降级为纯文本', e);
+            bubble.textContent = content;
+        }
+    }
+
+    function renderSingleMessage(container) {
+        if (!container) return;
+        renderAiChatBubbleContent(container, container.textContent);
+    }
+
+    function renderAiChatMath(container) {
+        renderSingleMessage(container);
+    }
+
+    function createAiChatButton() {
+        const btn = document.createElement('button');
+        btn.id = 'luogu-ai-chat-button';
+        btn.title = 'AI 聊天';
+        btn.innerText = '🗨';
+        btn.style.position = 'fixed';
+        btn.style.right = '20px';
+        btn.style.bottom = '80px';
+        btn.style.zIndex = '99999';
+        btn.style.width = '44px';
+        btn.style.height = '44px';
+        btn.style.padding = '0';
+        btn.style.display = 'flex';
+        btn.style.alignItems = 'center';
+        btn.style.justifyContent = 'center';
+        btn.style.background = '#67c23a';
+        btn.style.color = '#fff';
+        btn.style.border = 'none';
+        btn.style.borderRadius = '50%';
+        btn.style.cursor = 'pointer';
+        btn.style.boxShadow = '0 6px 18px rgba(0,0,0,0.18)';
+        btn.style.fontSize = '18px';
+        btn.style.userSelect = 'none';
+        btn.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            openAiChatPanel();
+        });
+        document.body.appendChild(btn);
+    }
+
+    function createAiChatPanel() {
+        const panel = document.createElement('div');
+        panel.id = 'luogu-ai-chat-panel';
+        panel.style.cssText = `
+            position: fixed;
+            right: 20px;
+            bottom: 140px;
+            z-index: 999999;
+            width: 340px;
+            max-width: calc(100vw - 40px);
+            height: 420px;
+            background: #fff;
+            border: 1px solid rgba(0,0,0,0.12);
+            border-radius: 12px;
+            box-shadow: 0 14px 40px rgba(0,0,0,0.18);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            font-size: 13px;
+        `;
+        panel.innerHTML = `
+            <div id="luogu-ai-chat-header" style="
+                padding:10px 12px;
+                background:#409eff;
+                color:#fff;
+                display:flex;
+                align-items:center;
+                justify-content:space-between;
+                cursor:grab;
+            ">
+                <span style="font-weight:600;">AI 聊天</span>
+                <button id="luogu-ai-chat-close" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:0;">×</button>
+            </div>
+            <div id="luogu-ai-chat-messages" style="
+                flex:1;
+                padding:10px;
+                overflow-y:auto;
+                background:#f7f8fa;
+                color:#222;
+            "></div>
+            <div style="padding:10px;background:#fff;border-top:1px solid #ebeef5;">
+                <textarea id="luogu-ai-chat-input" rows="3" placeholder="输入你的问题..." style="
+                    width:100%;
+                    resize:none;
+                    border:1px solid #d9d9d9;
+                    border-radius:8px;
+                    padding:8px 10px;
+                    font-size:13px;
+                    box-sizing:border-box;
+                "></textarea>
+                <button id="luogu-ai-chat-send" style="margin-top:8px;width:100%;padding:8px 0;border:none;border-radius:8px;background:#409eff;color:#fff;cursor:pointer;font-size:13px;">发送</button>
+            </div>
+        `;
+        document.body.appendChild(panel);
+
+        panel.querySelector('#luogu-ai-chat-close').addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            panel.style.display = 'none';
+        });
+
+        const input = panel.querySelector('#luogu-ai-chat-input');
+        const sendButton = panel.querySelector('#luogu-ai-chat-send');
+        const header = panel.querySelector('#luogu-ai-chat-header');
+
+        function submitChat() {
+            const value = input.value.trim();
+            if (!value) return;
+            sendAiChatMessage(value);
+        }
+
+        sendButton.addEventListener('click', submitChat);
+        input.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter') {
+                if (ev.ctrlKey) {
+                    const start = input.selectionStart;
+                    const end = input.selectionEnd;
+                    const value = input.value;
+                    input.value = value.slice(0, start) + '\n' + value.slice(end);
+                    input.selectionStart = input.selectionEnd = start + 1;
+                    return;
+                }
+                if (!ev.shiftKey) {
+                    ev.preventDefault();
+                    submitChat();
+                }
+            }
+        });
+
+        const dragState = {
+            active: false,
+            offsetX: 0,
+            offsetY: 0
+        };
+
+        function clamp(value, min, max) {
+            return Math.max(min, Math.min(max, value));
+        }
+
+        header.addEventListener('pointerdown', function (ev) {
+            if (ev.button !== 0) return;
+            if (ev.target.closest('#luogu-ai-chat-close')) return;
+            ev.preventDefault();
+            const rect = panel.getBoundingClientRect();
+            dragState.active = true;
+            dragState.offsetX = ev.clientX - rect.left;
+            dragState.offsetY = ev.clientY - rect.top;
+            panel.style.left = rect.left + 'px';
+            panel.style.top = rect.top + 'px';
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+            panel.setPointerCapture(ev.pointerId);
+        });
+
+        function onPointerMove(ev) {
+            if (!dragState.active) return;
+            ev.preventDefault();
+            const left = clamp(ev.clientX - dragState.offsetX, 8, window.innerWidth - panel.offsetWidth - 8);
+            const top = clamp(ev.clientY - dragState.offsetY, 8, window.innerHeight - panel.offsetHeight - 8);
+            panel.style.left = left + 'px';
+            panel.style.top = top + 'px';
+        }
+
+        function endDrag(ev) {
+            if (!dragState.active) return;
+            dragState.active = false;
+            try { panel.releasePointerCapture(ev.pointerId); } catch (e) { }
+        }
+
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', endDrag);
+        document.addEventListener('pointercancel', endDrag);
+
+        return panel;
+    }
+
+    function openAiChatPanel() {
+        if (!getAiChatEnabled()) return;
+        let panel = document.getElementById('luogu-ai-chat-panel');
+        if (!panel) {
+            panel = createAiChatPanel();
+        }
+        panel.style.display = 'flex';
+        const input = panel.querySelector('#luogu-ai-chat-input');
+        if (input) input.focus();
+    }
+
+    async function sendAiChatMessage(message) {
+        const panel = document.getElementById('luogu-ai-chat-panel');
+        if (!panel) return;
+        const messages = panel.querySelector('#luogu-ai-chat-messages');
+        const input = panel.querySelector('#luogu-ai-chat-input');
+        const sendButton = panel.querySelector('#luogu-ai-chat-send');
+        if (!messages || !input || !sendButton) return;
+
+        const trimmedMessage = (message || '').trim();
+        if (!trimmedMessage) return;
+
+        appendAiChatBubble('user', trimmedMessage);
+        input.value = '';
+        input.disabled = true;
+        sendButton.disabled = true;
+
+        const loading = appendAiChatBubble('assistant', '', true);
+
+        try {
+            const editorText = getEditorContent();
+
+            if (editorText && editorText !== aiChatState.lastEditorText) {
+                aiChatState.lastEditorText = editorText;
+
+                const contextContent = `当前题解正文（请以此为上下文回答）：\n${editorText}`;
+
+                const existingContextIndex = aiChatState.history.findIndex(
+                    item => item && item.role === 'user' && item.content && item.content.startsWith('当前题解正文')
+                );
+
+                const contextMessage = {
+                    role: 'user',
+                    content: contextContent
+                };
+
+                if (existingContextIndex >= 0) {
+                    aiChatState.history[existingContextIndex] = contextMessage;
+                } else {
+                    aiChatState.history.push(contextMessage);
+                }
+            }
+
+            if (aiChatState.lastAiCheckSummary && !aiChatState.aiCheckSummaryInjected) {
+                aiChatState.history.push({
+                    role: 'user',
+                    content: aiChatState.lastAiCheckSummary
+                });
+                aiChatState.aiCheckSummaryInjected = true;
+            }
+
+            aiChatState.history.push({ role: 'user', content: trimmedMessage });
+
+            const response = await callAI(aiChatState.history);
+            aiChatState.history.push({ role: 'assistant', content: response.trim() });
+
+            if (loading && loading.parentNode) {
+                const bubble = loading.querySelector('div');
+                if (bubble) {
+                    renderAiChatBubbleContent(bubble, response.trim());
+                }
+            } else {
+                appendAiChatBubble('assistant', response.trim());
+            }
+        } catch (err) {
+            if (loading && loading.parentNode) {
+                const bubble = loading.querySelector('div');
+                if (bubble) {
+                    bubble.innerHTML = escapeHtml(`AI 聊天失败：${err.message || err}`);
+                }
+            } else {
+                appendAiChatBubble('assistant', `AI 聊天失败：${err.message || err}`);
+            }
+        } finally {
+            input.disabled = false;
+            sendButton.disabled = false;
+            input.focus();
+        }
+    }
+
+    function appendAiChatBubble(role, content, isLoading) {
+        ensureAiChatStyles();
+
+        const messages = document.getElementById('luogu-ai-chat-messages');
+        if (!messages) return null;
+
+        const item = document.createElement('div');
+        item.style.marginBottom = '10px';
+        item.style.display = 'flex';
+        item.style.flexDirection = 'column';
+        item.style.alignItems = role === 'user' ? 'flex-end' : 'flex-start';
+
+        const bubble = document.createElement('div');
+        bubble.style.maxWidth = '100%';
+        bubble.style.padding = '8px 12px';
+        bubble.style.borderRadius = '12px';
+        bubble.style.whiteSpace = 'pre-wrap';
+        bubble.style.wordBreak = 'break-word';
+        bubble.style.background = role === 'user' ? '#409eff' : '#fff';
+        bubble.style.color = role === 'user' ? '#fff' : '#333';
+        bubble.style.border = role === 'assistant' ? '1px solid rgba(0,0,0,0.08)' : 'none';
+
+        if (isLoading) {
+            bubble.innerHTML = `
+                <div class="luogu-ai-chat-loading-bubble">
+                    <span>AI 正在生成回答</span>
+                    <span class="luogu-ai-chat-loading-dots">
+                        <span></span><span></span><span></span>
+                    </span>
+                </div>
+            `;
+        } else {
+            renderAiChatBubbleContent(bubble, content);
+        }
+
+        if (isLoading) {
+            item.classList.add('luogu-ai-chat-loading');
+        }
+
+        item.appendChild(bubble);
+        messages.appendChild(item);
+        messages.scrollTop = messages.scrollHeight;
+
+        return item;
+    }
+
     async function runCheck() {
         // 先关闭已有的浮窗
         const oldPanel = document.getElementById('luogu-format-result-panel');
@@ -1760,7 +2335,7 @@ ${formulas.join('\n')}
         var textWithoutFormulas = strippedText.replace(/\$\$[\s\S]*?\$\$|\$[^$\n]+\$/g, ' ');
 
         var results = [
-            ...checkRequiredSections(strippedText, isTemplate),
+            ...checkRequiredSections(rawText, isTemplate),
             ...checkIrrelevantContent(strippedText),
             ...checkHeadings(strippedText),
             ...checkBold(strippedText),
@@ -1775,32 +2350,12 @@ ${formulas.join('\n')}
             ...checkCodeStyle(rawText),
             ...checkMathEnvironment(strippedText)
         ];
-
-        // 仅在有 API Key 时调用 AI 检查；并捕获错误以防止阻断主流程
+        // AI 检查已移除，仅保留正则检查
         var aiResults = [];
-        if (getAiCheckEnabled() && getStoredApiKey()) {
-            var aiOverlay = null;
-            try {
-                aiOverlay = showAiThinkingOverlay();
-                aiResults = await runAICheck(formulas, aiText) || [];
-            } catch (err) {
-                console.warn('调用 AI 检查出错：', err);
-                aiResults = [];
-            } finally {
-                hideAiThinkingOverlay(aiOverlay);
-            }
-        } else {
-            if (!getAiCheckEnabled()) {
-                console.warn('AI 检查已关闭，已跳过 AI 检查。');
-            } else {
-                console.warn('未配置 API Key，已跳过 AI 检查。');
-            }
-        }
-
+        console.log('AI 检查已禁用，仅使用正则检查');
         var allResults = results.concat(aiResults);
         // 注意：不过滤已忽略，让它们在面板中显示并由 showResultPanel 决定是否显示恢复按钮
         // allResults = allResults.filter(issue => !isIgnored(issue));
-
         if (allResults.length === 0) {
             allResults.push({
                 type: RESULT_TYPE.INFO,
@@ -1883,15 +2438,27 @@ ${formulas.join('\n')}
             box-shadow: 0 10px 22px rgba(0,0,0,.16);
             opacity: 0;
             pointer-events: none;
-            transform: translateX(6px);
+            transform: translateY(4px);
             transition: opacity .16s ease, transform .16s ease;
         `;
         optionsPanel.innerHTML = `
             <div style="font-size:12px;font-weight:600;color:#333;margin-bottom:8px;">选项</div>
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#222;cursor:pointer;">
-                <input id="luogu-format-ai-toggle" type="checkbox">
-                <span>启用 AI 检查</span>
+                <input id="luogu-format-ai-chat-toggle" type="checkbox">
+                <span>启用 AI 聊天</span>
             </label>
+            <button id="luogu-format-ai-chat-open" style="
+                display:block;
+                width:100%;
+                padding:6px 0;
+                margin-top:6px;
+                border:none;
+                border-radius:6px;
+                background:#67c23a;
+                color:#fff;
+                cursor:pointer;
+                font-size:12px;
+            ">打开 AI 聊天</button>
             <button id="luogu-format-options-run" style="
                 display:block;
                 width:100%;
@@ -1941,8 +2508,16 @@ ${formulas.join('\n')}
             const rect = btn.getBoundingClientRect();
             const panelWidth = optionsPanel.offsetWidth || 220;
             const panelHeight = optionsPanel.offsetHeight || 140;
-            let left = rect.right + 10;
-            let top = rect.top;
+            let left, top;
+
+            // 优先放在按钮上方
+            if (rect.top - panelHeight - 10 > 0) {
+                left = rect.left + (rect.width - panelWidth) / 2;
+                top = rect.top - panelHeight - 10;
+            } else {
+                left = rect.left + (rect.width - panelWidth) / 2;
+                top = rect.bottom + 10;
+            }
 
             left = clampPanelValue(left, 8, window.innerWidth - panelWidth - 8);
             top = clampPanelValue(top, 8, window.innerHeight - panelHeight - 8);
@@ -1955,7 +2530,7 @@ ${formulas.join('\n')}
             clearOptionsPanelHideTimer();
             optionsPanel.style.opacity = '1';
             optionsPanel.style.pointerEvents = 'auto';
-            optionsPanel.style.transform = 'translateX(0)';
+            optionsPanel.style.transform = 'translateY(0)';
             requestAnimationFrame(updateOptionsPanelPosition);
         }
 
@@ -1963,16 +2538,28 @@ ${formulas.join('\n')}
             clearOptionsPanelHideTimer();
             optionsPanel.style.opacity = '0';
             optionsPanel.style.pointerEvents = 'none';
-            optionsPanel.style.transform = 'translateX(6px)';
+            optionsPanel.style.transform = 'translateY(4px)';
         }
 
-        // ---- AI 开关 ----
-        const aiToggle = optionsPanel.querySelector('#luogu-format-ai-toggle');
-        if (aiToggle) {
-            aiToggle.checked = getAiCheckEnabled();
-            aiToggle.addEventListener('change', function () {
-                setAiCheckEnabled(aiToggle.checked);
+        // ---- AI 聊天开关 ----
+        const aiChatToggle = optionsPanel.querySelector('#luogu-format-ai-chat-toggle');
+        if (aiChatToggle) {
+            aiChatToggle.checked = getAiChatEnabled();
+            aiChatToggle.addEventListener('change', function () {
+                setAiChatEnabled(aiChatToggle.checked);
+                updateAiChatButtonState();
             });
+        }
+
+        // ---- 打开 AI 聊天按钮 ----
+        const aiChatOpenBtn = optionsPanel.querySelector('#luogu-format-ai-chat-open');
+        if (aiChatOpenBtn) {
+            aiChatOpenBtn.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                if (!getAiChatEnabled()) return;
+                openAiChatPanel();
+            });
+            updateAiChatOpenButtonState();
         }
 
         // ---- 立即检查按钮 ----
@@ -2132,6 +2719,8 @@ ${formulas.join('\n')}
             } catch (e) { }
         });
 
+        updateAiChatButtonState();
+
         return true;
     }
 
@@ -2237,11 +2826,6 @@ ${formulas.join('\n')}
                 right++;
             }
             return { left, right, excerpt: text.slice(left, right) };
-        }
-
-        function escapeHtml(str) {
-            return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
         function getSnippetHtml(issue) {
@@ -2595,5 +3179,46 @@ ${formulas.join('\n')}
     function getIssueKey(issue) {
         return `${issue.type || ''}||${issue.message || ''}||${issue.highlight || ''}`;
     }
+    function ensureAiChatStyles() {
+        if (document.getElementById('luogu-ai-chat-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'luogu-ai-chat-styles';
+        style.textContent = `
+        .luogu-ai-chat-loading-bubble {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #666;
+        }
+        .luogu-ai-chat-loading-dots {
+            display: inline-flex;
+            gap: 4px;
+        }
+        .luogu-ai-chat-loading-dots span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #409eff;
+            animation: luogu-ai-chat-bounce 1.2s infinite ease-in-out;
+        }
+        .luogu-ai-chat-loading-dots span:nth-child(2) {
+            animation-delay: .18s;
+        }
+        .luogu-ai-chat-loading-dots span:nth-child(3) {
+            animation-delay: .36s;
+        }
+        @keyframes luogu-ai-chat-bounce {
+            0%, 80%, 100% {
+                transform: scale(0.7);
+                opacity: 0.45;
+            }
+            40% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+    `;
+        document.head.appendChild(style);
+    }
     //runCheck();
-})();
+}());
