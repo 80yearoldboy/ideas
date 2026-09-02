@@ -22,12 +22,8 @@
 (function () {//contributor: DeepSeek,Copilot Free,Sunny_boybgfcxc (luogu uid 1144516)
     'use strict';
 
-    // 注入 KaTeX 样式（由 @resource 提供）
-    // 获取 KaTeX CSS 原始文本
     var katexCss = GM_getResourceText('katexCSS');
-    // 将相对路径替换为 CDN 绝对路径
     var fixedCss = katexCss.replace(/url\(fonts\//g, 'url(https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/');
-    // 注入修改后的 CSS
     GM_addStyle(fixedCss);
 
     const RESULT_TYPE = {
@@ -1921,27 +1917,25 @@ ${formulas.join('\n')}
             return;
         }
 
-        if (content.length > 2000) {
-            bubble.textContent = content;
-            return;
-        }
-
         try {
-            let html = window.marked.parse(content, { breaks: true });
+            var katex = window.katex || unsafeWindow?.katex;
+            // 1. 先用 marked 解析 Markdown
+            var html = window.marked.parse(content, { breaks: true });
             html = window.DOMPurify.sanitize(html);
             bubble.innerHTML = html;
 
-            // 手动处理 $$...$$ 行间公式（支持换行）
+            // 2. 手动处理 $$...$$（在 DOM 中查找并替换）
             var walker = document.createTreeWalker(
                 bubble,
                 NodeFilter.SHOW_TEXT,
                 {
-                    acceptNode: function (node) {
-                        return node.nodeValue.includes('$$') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                    acceptNode: function(node) {
+                        return node.nodeValue && node.nodeValue.includes('$$')
+                            ? NodeFilter.FILTER_ACCEPT
+                            : NodeFilter.FILTER_REJECT;
                     }
                 }
             );
-
             var textNodes = [];
             while (walker.nextNode()) {
                 textNodes.push(walker.currentNode);
@@ -1950,7 +1944,6 @@ ${formulas.join('\n')}
             for (var i = 0; i < textNodes.length; i++) {
                 var node = textNodes[i];
                 var text = node.nodeValue;
-                // 修改正则：[\s\S]+? 匹配任意字符（包括换行）
                 var regex = /\$\$([\s\S]+?)\$\$/g;
                 var fragment = document.createDocumentFragment();
                 var lastIndex = 0;
@@ -1960,36 +1953,36 @@ ${formulas.join('\n')}
                     if (match.index > lastIndex) {
                         fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
                     }
-                    var formula = match[1];
-                    try {
-                        var container = document.createElement('div');
-                        container.style.textAlign = 'center';
-                        container.style.margin = '8px 0';
-                        window.katex.render(formula, container, {
-                            displayMode: true,
-                            throwOnError: false
-                        });
-                        fragment.appendChild(container);
-                    } catch (e) {
+                    var formula = match[1].replace(/^[\r\n]+|[\r\n]+$/g, '');
+                    if (katex && typeof katex.renderToString === 'function') {
+                        try {
+                            var container = document.createElement('div');
+                            container.style.textAlign = 'center';
+                            container.style.margin = '8px 0';
+                            container.innerHTML = katex.renderToString(formula, {
+                                displayMode: true,
+                                throwOnError: false
+                            });
+                            fragment.appendChild(container);
+                        } catch (e) {
+                            fragment.appendChild(document.createTextNode(match[0]));
+                        }
+                    } else {
                         fragment.appendChild(document.createTextNode(match[0]));
                     }
                     lastIndex = match.index + match[0].length;
                 }
-
                 if (lastIndex < text.length) {
                     fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
                 }
-
                 node.parentNode.replaceChild(fragment, node);
             }
 
-            // 再用 auto-render 处理行内公式（避免处理 $$）
+            // 3. 用 auto-render 处理行内公式 $...$（如果可用）
             if (typeof renderMathInElement !== 'undefined') {
                 window.renderMathInElement(bubble, {
                     delimiters: [
-                        { left: '$$', right: '$$', display: false },
                         { left: '$', right: '$', display: false },
-                        { left: '\\[', right: '\\]', display: true },
                         { left: '\\(', right: '\\)', display: false }
                     ],
                     throwOnError: false
